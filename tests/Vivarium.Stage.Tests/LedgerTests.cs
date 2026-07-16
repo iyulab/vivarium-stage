@@ -25,7 +25,7 @@ public class LedgerTests
         Assert.NotNull(entries[0].Fidelity);
         Assert.Equal("full", entries[0].Fidelity!["perFacet"]!["schema"]!["mode"]!.GetValue<string>());
         Assert.Equal("operator-1", entries[0].Actor);
-        Assert.Equal("live-0", entries[0].PreviousStateRef);
+        Assert.Equal("live-app", entries[0].PreviousStateRef);
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public class LedgerTests
         var view = LedgerProjection.Replay(await world.Ledger.ReadAllAsync())[TestWorld.TargetName];
         Assert.Equal(2, view.AppliedHistory.Count); // apply + rollback completions
         Assert.Null(view.PendingStarted);
-        Assert.Equal("live-0", view.ActiveStateRef); // rolled back to the original state
+        Assert.Equal("live-app", view.ActiveStateRef); // rolled back to the original state
 
         // the replayed active ref matches the adapter's reality
         var active = await world.Inner.ActiveStateAsync(TestWorld.TargetName);

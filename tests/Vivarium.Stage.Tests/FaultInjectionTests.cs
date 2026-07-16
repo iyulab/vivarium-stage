@@ -164,6 +164,6 @@ public class FaultInjectionTests
 
         // the same token for a DIFFERENT state ref is a contract violation
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            world.Inner.FlipAsync(TestWorld.TargetName, "live-0", "tok-idem"));
+            world.Inner.FlipAsync(TestWorld.TargetName, "live-app", "tok-idem"));
     }
 }

@@ -44,8 +44,11 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 ["artifacts"] = new JsonObject(),
             }
             : (JsonObject)initialWorld.DeepClone();
+        // state refs are globally unique — branches use a global counter, and
+        // the seed state embeds the target name (WorldCanonical resolves by ref alone)
+        var liveRef = $"live-{target}";
         lock (_lock)
-            _targets[target] = new TargetWorld { States = new() { ["live-0"] = world }, ActiveRef = "live-0" };
+            _targets[target] = new TargetWorld { States = new() { [liveRef] = world }, ActiveRef = liveRef };
     }
 
     /// <summary>Canonical JSON of the active world — lets tests assert "old or new, never mixed" byte-for-byte.</summary>
@@ -55,6 +58,22 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         {
             var world = Get(target);
             return JsonCanonicalizer.Canonicalize(world.States[world.ActiveRef].ToJsonString());
+        }
+    }
+
+    /// <summary>
+    /// Canonical JSON of any state (branch or live) — the host-side read
+    /// surface for driving simulation against a branch (adapter-api §3:
+    /// simulation is host territory; the adapter only exposes the world).
+    /// </summary>
+    public string WorldCanonical(string stateRef)
+    {
+        lock (_lock)
+        {
+            foreach (var world in _targets.Values)
+                if (world.States.TryGetValue(stateRef, out var state))
+                    return JsonCanonicalizer.Canonicalize(state.ToJsonString());
+            throw new InvalidOperationException($"unknown state ref: {stateRef}");
         }
     }
 
