@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Vivarium.Stage.Adapters.MorphDb/Vivarium.Stage.Adapters.MorphDb.csproj" />
     <Project Path="src/Vivarium.Stage/Vivarium.Stage.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Vivarium.Stage.Adapters.MorphDb.Tests/Vivarium.Stage.Adapters.MorphDb.Tests.csproj" />
     <Project Path="tests/Vivarium.Stage.Tests/Vivarium.Stage.Tests.csproj" />
   </Folder>
 </Solution>

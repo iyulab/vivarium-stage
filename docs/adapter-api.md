@@ -1,9 +1,8 @@
-# Backend adapter boundary (v0.1)
+# Backend adapter boundary (v0.2)
 
-Normative boundary between Stage and its backend adapters. This fixes the
-*operations and contracts* of the boundary; exact signatures are finalized
-with the first adapter (MorphDB) and recorded here as they land. Companion
-to [fault-model.md](fault-model.md).
+Normative boundary between Stage and its backend adapters. v0.1 fixed the
+*operations and contracts*; v0.2 records the signatures as finalized with the
+first adapter (MorphDB) — see §6. Companion to [fault-model.md](fault-model.md).
 
 ## 1. Division of labor
 
@@ -55,8 +54,54 @@ Per branch, machine-readable:
 The declaration is the interpretation rule for simulation evidence and is
 recorded in the ledger with the apply (branching decision; fault-model §3).
 
-## 5. Open until the first adapter (4.b)
+## 5. Still open (deferred with rationale)
 
-- Exact wire signatures and error taxonomy
-- Data subset selection rules for `subset` fidelity
-- Whether `prepare` exposes progress for large facets
+- Data subset selection rules for `subset` fidelity — no adapter produces
+  `subset` yet (in-memory: cow/full, MorphDB: snapshot/full); specified with
+  the first subset-producing adapter, demand-driven.
+- Whether `prepare` exposes progress for large facets — not needed at current
+  facet sizes; revisit with the first large-data adapter.
+
+## 6. Signatures (finalized with the first adapter — .NET reference)
+
+Resolved in 4.b: the exact boundary is `IBackendAdapter`
+(`src/Vivarium.Stage/Adapters/IBackendAdapter.cs`), first implemented by the
+in-memory reference adapter and the MorphDB adapter
+(`src/Vivarium.Stage.Adapters.MorphDb`).
+
+```csharp
+interface IBackendAdapter
+{
+    CapabilityManifest Capabilities { get; }                    // §2
+    Task<BranchInfo>    BranchAsync(string target, CancellationToken ct = default);
+    Task<PrepareReport> PrepareAsync(string branchRef, PreparedFacets facets, CancellationToken ct = default);
+    Task                FlipAsync(string target, string stateRef, string applyToken, CancellationToken ct = default);
+    Task<ActiveState>   ActiveStateAsync(string target, CancellationToken ct = default);
+    Task                DiscardAsync(string branchRef, CancellationToken ct = default);
+}
+
+record PreparedFacets(string ChangesetFingerprint, JsonObject Patches); // the adapter sees patches + fingerprint, never approvals/ledger
+record BranchInfo(string BranchRef, FidelityDeclaration Fidelity);
+record PrepareReport(IReadOnlyDictionary<string, bool> FacetComplete);  // Stage confirms ALL before any flip
+record ActiveState(string StateRef, IReadOnlyDictionary<string, string> FacetFingerprints);
+record FidelityDeclaration(IReadOnlyDictionary<string, FacetFidelity> PerFacet, IReadOnlyList<string> KnownDifferences);
+record FacetFidelity(string Mode /* full|subset|stub */, string Method /* cow|snapshot|sample|… */, string? SelectionRule = null);
+```
+
+Design points that landed during implementation:
+
+- **`ActiveState` carries the state ref, not just fingerprints.** The active
+  pointer's value is the rollback return path and the decider for post-crash
+  ledger reconciliation (fault-model F5); per-facet fingerprints serve the
+  drift gate. Both are needed, so the operation returns both.
+- **Refs are opaque strings.** A branch ref doubles as a state ref once
+  flipped (a branch *is* the thing that graduates to an apply). MorphDB
+  binds them to project ids; the in-memory adapter to world keys.
+- **Error taxonomy (v0)**: gate refusals are Stage's (`StageRefusedException`);
+  adapter failures during branch/prepare are retryable-or-discardable (F1/F2);
+  `FlipAsync` re-issued with a used token for a *different* state ref MUST
+  throw — same token + same state ref is the idempotent recovery no-op.
+- **MorphDB flip primitive**: a stage-owned control project holds a targets
+  pointer table and a flip log; one MorphDB transaction (PostgreSQL ACID)
+  inserts the unique flip token and repoints the target row. Atomic, durable,
+  idempotent-under-token — the §2 `atomic-swap` declaration is honest.
