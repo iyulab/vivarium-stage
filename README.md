@@ -42,15 +42,15 @@ Preview and release are one repository because they are one state machine: a bra
 
 ## What this repository is not
 
-- **Not an authoring tool.** Stage never creates or modifies changesets; it consumes them. Authoring belongs to agents ([`vivarium-agent`](../vivarium-agent)) or humans.
-- **Not a UI runtime.** Stage stores and versions UI artifacts as opaque payloads within changesets; rendering them is the runtime's job ([`vivarium`](../vivarium)).
+- **Not an authoring tool.** Stage never creates or modifies changesets; it consumes them. Authoring belongs to agents ([`vivarium-agent`](https://github.com/iyulab/vivarium-agent)) or humans.
+- **Not a UI runtime.** Stage stores and versions UI artifacts as opaque payloads within changesets; rendering them is the runtime's job ([`vivarium`](https://github.com/iyulab/vivarium)).
 - **Not a CI/CD system.** Stage applies application-level changesets to running systems in seconds. It does not build code, run test matrices, or deploy infrastructure.
 - **Not a database.** Stage orchestrates backends through adapters; it does not persist tenant data itself.
 
 ## Fixed principles
 
 1. **Apply is atomic across facets.** Schema, data, and UI land together or not at all. There is no API for applying part of a changeset.
-2. **Apply is fingerprint-gated.** Stage executes exactly a reviewed changeset fingerprint or refuses — the [`vivarium-changeset`](../vivarium-changeset) gate semantics, enforced at the only place that matters.
+2. **Apply is fingerprint-gated.** Stage executes exactly a reviewed changeset fingerprint or refuses — the [`vivarium-changeset`](https://github.com/iyulab/vivarium-changeset) gate semantics, enforced at the only place that matters.
 3. **Drift refuses, never guesses.** If the live base state no longer matches the changeset's provenance, Stage rejects; re-basing is the author's job, not the applier's.
 4. **Every apply has a return path.** A changeset that cannot be rolled back (or explicitly, reviewably declares itself irreversible) does not get applied.
 5. **Simulation is honest.** A branch must be faithful enough that "it worked in preview" is evidence, not superstition. Where fidelity is limited, Stage says so rather than pretending.
@@ -66,7 +66,7 @@ Preview and release are one repository because they are one state machine: a bra
 
 ## Relationship to the Vivarium family
 
-Depends on [`vivarium-changeset`](../vivarium-changeset) only. It does not know how changesets are authored and does not depend on `vivarium` or `vivarium-agent`. It is the family's sole holder of write authority over live systems — a deliberate concentration: one place to audit, one place to harden.
+Depends on [`vivarium-changeset`](https://github.com/iyulab/vivarium-changeset) only. It does not know how changesets are authored and does not depend on `vivarium` or `vivarium-agent`. It is the family's sole holder of write authority over live systems — a deliberate concentration: one place to audit, one place to harden.
 
 Standalone use is a first-class scenario: any platform that needs *"preview, atomically apply, and roll back structured changes to a running system"* can adopt Stage with its own adapter, with or without the rest of the family.
 
