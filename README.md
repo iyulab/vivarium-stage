@@ -2,7 +2,7 @@
 
 > Changeset lifecycle service — branch, simulate, atomically apply, and roll back live application changes.
 
-**Status: design phase (pre-0.1).** This document fixes the service's purpose, its state machine, and its safety invariants. Storage, branching mechanics, and deployment topology are intentionally left open.
+**Status: design phase (pre-0.1).** This document fixes the service's purpose, its state machine, and its safety invariants. The crash-consistency strategy and the branching boundary are decided (below); storage and deployment topology are intentionally left open.
 
 ---
 
@@ -56,9 +56,27 @@ Preview and release are one repository because they are one state machine: a bra
 5. **Simulation is honest.** A branch must be faithful enough that "it worked in preview" is evidence, not superstition. Where fidelity is limited, Stage says so rather than pretending.
 6. **The ledger is append-only.** History is never rewritten.
 
+## Decided in v0
+
+- **Crash-consistency: prepare-all → atomic flip.** Every facet's new state
+  is completed in staging (no live effect, safely discardable), then
+  activated by one atomic pointer swap. A crash therefore leaves either the
+  old world or the new one — a half-applied state is structurally
+  impossible, not managed. Rollback is a re-flip. The full failure model,
+  including the partial-failure matrix and ledger write-ahead ordering, is
+  in [docs/fault-model.md](docs/fault-model.md).
+- **Branching is adapter territory; fidelity declaration is not.** How a
+  branch is made (copy-on-write, snapshot, subset sampling) belongs to each
+  adapter. What Stage mandates is a machine-readable fidelity declaration —
+  what was replicated, how faithfully — without which a branch cannot enter
+  simulation, and which is recorded in the ledger alongside the apply.
+- **The adapter contract's two pillars.** An adapter either provides the
+  atomic swap primitive (idempotent under an apply token) or honestly
+  declares its degradation, and applies through a degraded adapter require
+  explicit host policy consent.
+
 ## Deliberately undecided
 
-- Branching mechanics (copy-on-write, snapshot, subset sampling of data — likely per-adapter)
 - Which backends beyond MorphDB get adapters, and the adapter API's final shape
 - Deployment topology (per-tenant, shared service, embedded library mode)
 - Retention and lifecycle policy for branches and preview environments
