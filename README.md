@@ -73,7 +73,9 @@ Preview and release are one repository because they are one state machine: a bra
 - **The adapter contract's two pillars.** An adapter either provides the
   atomic swap primitive (idempotent under an apply token) or honestly
   declares its degradation, and applies through a degraded adapter require
-  explicit host policy consent.
+  explicit host policy consent. The boundary's operations and contracts are
+  fixed in [docs/adapter-api.md](docs/adapter-api.md); exact signatures land
+  with the first adapter.
 
 ## Deliberately undecided
 
