@@ -2,7 +2,7 @@
 
 > Changeset lifecycle service — branch, simulate, atomically apply, and roll back live application changes.
 
-**Status: design phase (pre-0.1).** This document fixes the service's purpose, its state machine, and its safety invariants. The crash-consistency strategy and the branching boundary are decided (below); storage and deployment topology are intentionally left open.
+**Status: core implemented (pre-0.1).** The lifecycle state machine, fingerprint gate with drift refusal, append-only release ledger, and the backend adapter boundary (with a reference in-memory adapter) live in [`src/Vivarium.Stage`](src/Vivarium.Stage) (.NET); the [fault model](docs/fault-model.md)'s partial-failure matrix (F1–F6) is executed as fault-injection tests. The first backend adapter (MorphDB) is next; storage and deployment topology are intentionally left open.
 
 ---
 

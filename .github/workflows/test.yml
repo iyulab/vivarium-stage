@@ -1,0 +1,27 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      # Pre-publish stopgap: Vivarium.Changeset is a ProjectReference to a
+      # sibling checkout (../vivarium-changeset). Once the SDK is published to
+      # NuGet, replace this double checkout with a normal package reference.
+      - uses: actions/checkout@v4
+        with:
+          path: vivarium-stage
+      - uses: actions/checkout@v4
+        with:
+          repository: iyulab/vivarium-changeset
+          path: vivarium-changeset
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Unit + fault-injection tests
+        run: dotnet test
+        working-directory: vivarium-stage
