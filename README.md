@@ -4,6 +4,8 @@
 
 **Status: core + first adapter implemented (pre-0.1).** The lifecycle state machine, fingerprint gate with drift refusal, append-only release ledger, and the backend adapter boundary (with a reference in-memory adapter) live in [`src/Vivarium.Stage`](src/Vivarium.Stage) (.NET); the [fault model](docs/fault-model.md)'s partial-failure matrix (F1–F6) is executed as fault-injection tests. The first real adapter, [`src/Vivarium.Stage.Adapters.MorphDb`](src/Vivarium.Stage.Adapters.MorphDb), runs the full lifecycle against a live [MorphDB](https://github.com/iyulab/MorphDB) (project-per-state branching, atomic flip via a control-table transaction) — the [adapter boundary signatures](docs/adapter-api.md) are finalized. Storage and deployment topology remain intentionally open.
 
+**To run the lifecycle in your host, start with the [getting-started guide](docs/getting-started.md).**
+
 ---
 
 ## Why

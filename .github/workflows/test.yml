@@ -50,6 +50,15 @@ jobs:
           Console.WriteLine("consumer sees " + typeof(ChangeSession).FullName);
           EOF
           dotnet run --project .
+      # Docs-example verification (Phase 5.c): the getting-started fences are
+      # extracted and executed as one fresh consumer program (runner is a
+      # type-stripped .ts script, hence the Node setup).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Getting-started examples run as a fresh consumer
+        run: node tools/verify-docs-examples.ts
+        working-directory: vivarium-stage
 
   # Live-service regression for the MorphDB adapter: real PostgreSQL + the
   # MorphDB service run from source, then the MORPHDB_URL-gated tests.
