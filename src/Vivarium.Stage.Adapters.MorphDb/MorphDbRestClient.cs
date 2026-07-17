@@ -5,10 +5,10 @@ namespace Vivarium.Stage.Adapters.MorphDb;
 
 /// <summary>
 /// Minimal MorphDB REST client for the adapter's needs, bound to the service's
-/// current wire format. Exists because the published MorphDB.Client (0.4.0)
-/// deserializes an older schema wire shape and fails against current services
-/// (upstream issue drafted); JsonNode-based access keeps this resilient to
-/// additive server changes.
+/// current wire format. Deliberately package-free: the adapter stays decoupled
+/// from MorphDB.Client release cadence (0.4.0 shipped with a wire mismatch,
+/// fixed in 0.5.0 via breaking renames), and JsonNode-based access keeps this
+/// resilient to additive server changes.
 /// </summary>
 public sealed class MorphDbRestClient : IDisposable
 {

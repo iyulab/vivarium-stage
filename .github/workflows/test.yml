@@ -25,3 +25,76 @@ jobs:
       - name: Unit + fault-injection tests
         run: dotnet test
         working-directory: vivarium-stage
+
+  # Live-service regression for the MorphDB adapter: real PostgreSQL + the
+  # MorphDB service run from source, then the MORPHDB_URL-gated tests.
+  morphdb-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: morph
+          POSTGRES_PASSWORD: morph
+          POSTGRES_DB: morphdb
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U morph"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: vivarium-stage
+      - uses: actions/checkout@v4
+        with:
+          repository: iyulab/vivarium-changeset
+          path: vivarium-changeset
+      # MorphDB pinned to 0.5.0 (2b57c4d) — the first release with the REST
+      # JsonElement fixes the adapter flow requires. No release tag exists yet;
+      # bump the SHA deliberately when adopting a newer service version.
+      - uses: actions/checkout@v4
+        with:
+          repository: iyulab/MorphDB
+          ref: 2b57c4df6d67042efbf9e73ca4739eb91121c401
+          path: morphdb
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Start MorphDB service
+        working-directory: morphdb
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ASPNETCORE_URLS: http://localhost:5400
+          ConnectionStrings__MorphDB: Host=localhost;Port=5432;Database=morphdb;Username=morph;Password=morph
+          ConnectionStrings__Redis: ""
+        run: |
+          dotnet build src/MorphDB.Service -c Release
+          nohup dotnet run --project src/MorphDB.Service -c Release --no-build > morphdb.log 2>&1 &
+      - name: Bootstrap dev API key
+        id: bootstrap
+        run: |
+          key=""
+          for i in $(seq 1 30); do
+            body=$(curl -s -X POST http://localhost:5400/api/dev/bootstrap || true)
+            key=$(echo "$body" | jq -r '.apiKey // empty')
+            [ -n "$key" ] && break
+            sleep 2
+          done
+          if [ -z "$key" ]; then
+            echo "MorphDB did not become ready" >&2
+            tail -100 morphdb/morphdb.log || true
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "api_key=$key" >> "$GITHUB_OUTPUT"
+      - name: Adapter integration tests
+        working-directory: vivarium-stage
+        env:
+          MORPHDB_URL: http://localhost:5400
+          MORPHDB_API_KEY: ${{ steps.bootstrap.outputs.api_key }}
+        run: dotnet test tests/Vivarium.Stage.Adapters.MorphDb.Tests -c Release
+      - name: Service log on failure
+        if: failure()
+        run: tail -100 morphdb/morphdb.log || true

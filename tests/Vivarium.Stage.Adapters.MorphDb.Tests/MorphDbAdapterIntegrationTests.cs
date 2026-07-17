@@ -193,8 +193,8 @@ public class MorphDbAdapterIntegrationTests
         Assert.Single(await client.QueryAllAsync("loan")); // update ran once, no phantom rows
 
         var table = await client.GetTableAsync("loan");
-        Assert.Single(((JsonArray)table!["columns"]!).OfType<JsonObject>()
-            .Where(c => c["name"]!.GetValue<string>() == "dueDate")); // column added once
+        Assert.Single(((JsonArray)table!["columns"]!).OfType<JsonObject>(),
+            c => c["name"]!.GetValue<string>() == "dueDate"); // column added once
     }
 
     [SkippableFact]
