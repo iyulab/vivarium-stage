@@ -25,6 +25,31 @@ jobs:
       - name: Unit + fault-injection tests
         run: dotnet test
         working-directory: vivarium-stage
+      # Consumer-contact smoke (Phase 5.a): a throwaway console project
+      # references Vivarium.Stage and compiles against the public surface —
+      # catches breakage that only shows up at first consumer contact. Still
+      # sibling-dependent until the NuGet publish (Phase 5.b).
+      - name: Fresh consumer project references Vivarium.Stage
+        run: |
+          mkdir "$RUNNER_TEMP/consumer" && cd "$RUNNER_TEMP/consumer"
+          cat > consumer.csproj <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net10.0</TargetFramework>
+              <Nullable>enable</Nullable>
+              <ImplicitUsings>enable</ImplicitUsings>
+            </PropertyGroup>
+            <ItemGroup>
+              <ProjectReference Include="$GITHUB_WORKSPACE/vivarium-stage/src/Vivarium.Stage/Vivarium.Stage.csproj" />
+            </ItemGroup>
+          </Project>
+          EOF
+          cat > Program.cs <<'EOF'
+          using Vivarium.Stage;
+          Console.WriteLine("consumer sees " + typeof(ChangeSession).FullName);
+          EOF
+          dotnet run --project .
 
   # Live-service regression for the MorphDB adapter: real PostgreSQL + the
   # MorphDB service run from source, then the MORPHDB_URL-gated tests.
