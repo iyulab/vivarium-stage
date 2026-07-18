@@ -2,7 +2,7 @@
 
 > Changeset lifecycle service — branch, simulate, atomically apply, and roll back live application changes.
 
-**Status: core + first adapter implemented (pre-0.1).** The lifecycle state machine, fingerprint gate with drift refusal, append-only release ledger, and the backend adapter boundary (with a reference in-memory adapter) live in [`src/Vivarium.Stage`](src/Vivarium.Stage) (.NET); the [fault model](docs/fault-model.md)'s partial-failure matrix (F1–F6) is executed as fault-injection tests. The first real adapter, [`src/Vivarium.Stage.Adapters.MorphDb`](src/Vivarium.Stage.Adapters.MorphDb), runs the full lifecycle against a live [MorphDB](https://github.com/iyulab/MorphDB) (project-per-state branching, atomic flip via a control-table transaction) — the [adapter boundary signatures](docs/adapter-api.md) are finalized. Storage and deployment topology remain intentionally open.
+**Status: core + first adapter implemented (pre-0.1).** The lifecycle state machine, fingerprint gate with drift refusal, append-only release ledger, and the backend adapter boundary (with a reference in-memory adapter) live in [`src/Vivarium.Stage`](src/Vivarium.Stage) (.NET); the [fault model](docs/fault-model.md)'s partial-failure matrix (F1–F6) is executed as fault-injection tests. The [first real adapter](src/Vivarium.Stage.Adapters.MorphDb) runs the full lifecycle against a live PostgreSQL-backed database service with project-level branching (project-per-state branching, atomic flip via a control-table transaction) — the [adapter boundary signatures](docs/adapter-api.md) are finalized. Storage and deployment topology remain intentionally open.
 
 **To run the lifecycle in your host, start with the [getting-started guide](docs/getting-started.md).**
 
@@ -38,7 +38,7 @@ Preview and release are one repository because they are one state machine: a bra
 ## What this repository contains
 
 - **The lifecycle service.** The state machine above, exposed as an API: create branch, run simulation, gate and execute apply, roll back, inspect history.
-- **The backend adapter boundary.** Stage speaks to schema/data backends through adapters. [MorphDB](https://github.com/iyulab/MorphDB) is the first adapter — its logical/physical separation makes branching natural — but the boundary is designed in from the start; Stage must not be un-portable from it.
+- **The backend adapter boundary.** Stage speaks to schema/data backends through adapters. The [first adapter](src/Vivarium.Stage.Adapters.MorphDb) targets a backend whose logical/physical separation makes branching natural — but the boundary is designed in from the start; Stage must not be un-portable from it.
 - **The release ledger.** An append-only history of what was applied, when, by whom, from which fingerprint — the audit trail a runtime-mutable platform owes its operators.
 - **Live propagation hooks.** After a successful apply, connected clients are told to pick up the new world. The mechanism is adapter/host territory; the hook is Stage's.
 
@@ -81,10 +81,10 @@ Preview and release are one repository because they are one state machine: a bra
 
 ## Deliberately undecided
 
-- Which backends beyond MorphDB get adapters, and the adapter API's final shape
+- Which further backends get adapters, and the adapter API's final shape
 - Deployment topology (per-tenant, shared service, embedded library mode)
 - Retention and lifecycle policy for branches and preview environments
-- The live-propagation transport (SignalR is the natural first choice via MorphDB, not a commitment)
+- The live-propagation transport (SignalR is a natural first candidate, not a commitment)
 
 ## Relationship to the Vivarium family
 

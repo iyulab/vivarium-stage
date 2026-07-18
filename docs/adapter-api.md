@@ -2,7 +2,7 @@
 
 Normative boundary between Stage and its backend adapters. v0.1 fixed the
 *operations and contracts*; v0.2 records the signatures as finalized with the
-first adapter (MorphDB) — see §6. Companion to [fault-model.md](fault-model.md).
+first real adapter — see §6. Companion to [fault-model.md](fault-model.md).
 
 ## 1. Division of labor
 
@@ -57,7 +57,7 @@ recorded in the ledger with the apply (branching decision; fault-model §3).
 ## 5. Still open (deferred with rationale)
 
 - Data subset selection rules for `subset` fidelity — no adapter produces
-  `subset` yet (in-memory: cow/full, MorphDB: snapshot/full); specified with
+  `subset` yet (in-memory: cow/full, first adapter: snapshot/full); specified with
   the first subset-producing adapter, demand-driven.
 - Whether `prepare` exposes progress for large facets — not needed at current
   facet sizes; revisit with the first large-data adapter.
@@ -66,7 +66,7 @@ recorded in the ledger with the apply (branching decision; fault-model §3).
 
 Resolved in 4.b: the exact boundary is `IBackendAdapter`
 (`src/Vivarium.Stage/Adapters/IBackendAdapter.cs`), first implemented by the
-in-memory reference adapter and the MorphDB adapter
+in-memory reference adapter and the first backend adapter
 (`src/Vivarium.Stage.Adapters.MorphDb`).
 
 ```csharp
@@ -95,13 +95,13 @@ Design points that landed during implementation:
   ledger reconciliation (fault-model F5); per-facet fingerprints serve the
   drift gate. Both are needed, so the operation returns both.
 - **Refs are opaque strings.** A branch ref doubles as a state ref once
-  flipped (a branch *is* the thing that graduates to an apply). MorphDB
-  binds them to project ids; the in-memory adapter to world keys.
+  flipped (a branch *is* the thing that graduates to an apply). The first
+  adapter binds them to backend project ids; the in-memory adapter to world keys.
 - **Error taxonomy (v0)**: gate refusals are Stage's (`StageRefusedException`);
   adapter failures during branch/prepare are retryable-or-discardable (F1/F2);
   `FlipAsync` re-issued with a used token for a *different* state ref MUST
   throw — same token + same state ref is the idempotent recovery no-op.
-- **MorphDB flip primitive**: a stage-owned control project holds a targets
-  pointer table and a flip log; one MorphDB transaction (PostgreSQL ACID)
+- **First adapter's flip primitive**: a stage-owned control project holds a
+  targets pointer table and a flip log; one backend transaction (PostgreSQL ACID)
   inserts the unique flip token and repoints the target row. Atomic, durable,
   idempotent-under-token — the §2 `atomic-swap` declaration is honest.
