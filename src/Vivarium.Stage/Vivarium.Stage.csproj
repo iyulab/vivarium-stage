@@ -14,4 +14,26 @@
     <RepositoryUrl>https://github.com/iyulab/vivarium-stage</RepositoryUrl>
   </PropertyGroup>
 
+  <!-- Package identity. Stage versions independently of the changeset spec — it
+       consumes the contract, it does not define it. -->
+  <PropertyGroup>
+    <PackageId>Vivarium.Stage</PackageId>
+    <Authors>iyulab</Authors>
+    <PackageProjectUrl>https://github.com/iyulab/vivarium-stage</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>changeset;schema-migration;lifecycle;rollback;ledger;adapter</PackageTags>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The repository readme is the package readme — one source, shown both on
+         GitHub and on nuget.org (its links are absolute for that reason). -->
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
 </Project>

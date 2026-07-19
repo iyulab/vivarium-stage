@@ -2,9 +2,9 @@
 
 > Changeset lifecycle service — branch, simulate, atomically apply, and roll back live application changes.
 
-**Status: core implemented (pre-0.1).** The lifecycle state machine, fingerprint gate with drift refusal, append-only release ledger, and the backend adapter boundary (with a reference in-memory adapter) live in [`src/Vivarium.Stage`](src/Vivarium.Stage) (.NET); the [fault model](docs/fault-model.md)'s partial-failure matrix (F1–F6) is executed as fault-injection tests. The [adapter boundary signatures](docs/adapter-api.md) are finalized — proven by running the full lifecycle (project-per-state branching, atomic flip via a control-table transaction) against a live backend service; real-backend adapters are owned by consuming applications, not this repository. Storage and deployment topology remain intentionally open.
+**Status: core implemented (pre-0.1).** The lifecycle state machine, fingerprint gate with drift refusal, append-only release ledger, and the backend adapter boundary (with a reference in-memory adapter) live in [`src/Vivarium.Stage`](https://github.com/iyulab/vivarium-stage/tree/main/src/Vivarium.Stage) (.NET); the [fault model](https://github.com/iyulab/vivarium-stage/blob/main/docs/fault-model.md)'s partial-failure matrix (F1–F6) is executed as fault-injection tests. The [adapter boundary signatures](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md) are finalized — proven by running the full lifecycle (project-per-state branching, atomic flip via a control-table transaction) against a live backend service; real-backend adapters are owned by consuming applications, not this repository. Storage and deployment topology remain intentionally open.
 
-**To run the lifecycle in your host, start with the [getting-started guide](docs/getting-started.md).**
+**To run the lifecycle in your host, start with the [getting-started guide](https://github.com/iyulab/vivarium-stage/blob/main/docs/getting-started.md).**
 
 ---
 
@@ -38,7 +38,7 @@ Preview and release are one repository because they are one state machine: a bra
 ## What this repository contains
 
 - **The lifecycle service.** The state machine above, exposed as an API: create branch, run simulation, gate and execute apply, roll back, inspect history.
-- **The backend adapter boundary.** Stage speaks to schema/data backends through adapters. This repository ships the [boundary contract](docs/adapter-api.md) and a reference in-memory adapter; real-backend adapters live with the consuming application. The boundary is designed in from the start — Stage must not be un-portable from any one backend.
+- **The backend adapter boundary.** Stage speaks to schema/data backends through adapters. This repository ships the [boundary contract](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md) and a reference in-memory adapter; real-backend adapters live with the consuming application. The boundary is designed in from the start — Stage must not be un-portable from any one backend.
 - **The release ledger.** An append-only history of what was applied, when, by whom, from which fingerprint — the audit trail a runtime-mutable platform owes its operators.
 - **Live propagation hooks.** After a successful apply, connected clients are told to pick up the new world. The mechanism is adapter/host territory; the hook is Stage's.
 
@@ -67,7 +67,7 @@ Preview and release are one repository because they are one state machine: a bra
   old world or the new one — a half-applied state is structurally
   impossible, not managed. Rollback is a re-flip. The full failure model,
   including the partial-failure matrix and ledger write-ahead ordering, is
-  in [docs/fault-model.md](docs/fault-model.md).
+  in [docs/fault-model.md](https://github.com/iyulab/vivarium-stage/blob/main/docs/fault-model.md).
 - **Branching is adapter territory; fidelity declaration is not.** How a
   branch is made (copy-on-write, snapshot, subset sampling) belongs to each
   adapter. What Stage mandates is a machine-readable fidelity declaration —
@@ -77,7 +77,7 @@ Preview and release are one repository because they are one state machine: a bra
   atomic swap primitive (idempotent under an apply token) or honestly
   declares its degradation, and applies through a degraded adapter require
   explicit host policy consent. The boundary's operations and contracts are
-  fixed in [docs/adapter-api.md](docs/adapter-api.md); exact signatures land
+  fixed in [docs/adapter-api.md](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md); exact signatures land
   with the first adapter.
 
 ## Deliberately undecided

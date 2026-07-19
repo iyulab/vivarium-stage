@@ -1,0 +1,121 @@
+name: publish
+
+# 0.X release train: pushing a version tag (v0.0.2, ...) publishes Vivarium.Stage
+# to NuGet, then verifies it from the registry as a fresh consumer.
+#
+# Ordering constraint: Stage's package declares a dependency on Vivarium.Changeset
+# (the ProjectReference to the sibling checkout becomes a package dependency at
+# pack time). A consumer can only restore Stage if that exact Changeset version is
+# already on nuget.org — so this workflow refuses to push until it has proven the
+# dependency resolves from the public registry. Publish changeset first.
+#
+# NUGET_API_KEY is a nuget.org key scoped to the Vivarium.* prefix.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  nuget:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Pre-publish stopgap, same as test.yml: Vivarium.Changeset is a
+      # ProjectReference to a sibling checkout. Once it is on NuGet this double
+      # checkout is replaced by a plain PackageReference.
+      - uses: actions/checkout@v4
+        with:
+          path: vivarium-stage
+      - uses: actions/checkout@v4
+        with:
+          repository: iyulab/vivarium-changeset
+          path: vivarium-changeset
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Tag matches the project version
+        id: meta
+        working-directory: vivarium-stage
+        run: |
+          v=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/Vivarium.Stage/Vivarium.Stage.csproj)
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match project version $v" >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Unit + fault-injection tests
+        run: dotnet test -c Release
+        working-directory: vivarium-stage
+      - name: Pack
+        run: dotnet pack src/Vivarium.Stage/Vivarium.Stage.csproj -c Release -o "$RUNNER_TEMP/nupkg"
+        working-directory: vivarium-stage
+        env:
+          ContinuousIntegrationBuild: "true"
+      # The ordering gate. Read the dependency the pack actually produced, then
+      # prove it restores from nuget.org alone. Publishing Stage against an
+      # unpublished Changeset would ship a package nobody can install.
+      - name: Declared Vivarium.Changeset dependency resolves from nuget.org
+        run: |
+          cd "$RUNNER_TEMP" && mkdir -p nuspec && cd nuspec
+          unzip -o -q "$RUNNER_TEMP"/nupkg/Vivarium.Stage.*.nupkg Vivarium.Stage.nuspec
+          dep=$(sed -n 's:.*<dependency id="Vivarium.Changeset" version="\([^"]*\)".*:\1:p' Vivarium.Stage.nuspec)
+          if [ -z "$dep" ]; then
+            echo "packed nuspec declares no Vivarium.Changeset dependency — the package would not compile for consumers" >&2
+            exit 1
+          fi
+          echo "declared dependency: Vivarium.Changeset $dep"
+          mkdir -p "$RUNNER_TEMP/depcheck" && cd "$RUNNER_TEMP/depcheck"
+          cat > depcheck.csproj <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <TargetFramework>net10.0</TargetFramework>
+              <RestoreSources>https://api.nuget.org/v3/index.json</RestoreSources>
+            </PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="Vivarium.Changeset" Version="[$dep]" />
+            </ItemGroup>
+          </Project>
+          EOF
+          # --packages forces an empty global-packages folder: without it a copy
+          # already in the runner's cache would satisfy the restore and the gate
+          # would pass for a version that was never published.
+          if ! dotnet restore --no-cache --packages "$RUNNER_TEMP/depcheck-pkgs"; then
+            echo "Vivarium.Changeset $dep is not on nuget.org — publish vivarium-changeset first" >&2
+            exit 1
+          fi
+      - name: Push to nuget.org
+        run: |
+          dotnet nuget push "$RUNNER_TEMP/nupkg/*.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${{ secrets.NUGET_API_KEY }}"
+      # Prove the published artifact is consumable from the registry, not just
+      # that the push returned 200. The index takes a few minutes to serve a new
+      # version, hence the retry.
+      - name: Verify the published package from the registry
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir consumer && cd consumer
+          cat > consumer.csproj <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net10.0</TargetFramework>
+              <Nullable>enable</Nullable>
+              <ImplicitUsings>enable</ImplicitUsings>
+            </PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="Vivarium.Stage" Version="${{ steps.meta.outputs.version }}" />
+            </ItemGroup>
+          </Project>
+          EOF
+          cat > Program.cs <<'EOF'
+          using Vivarium.Stage;
+          Console.WriteLine("registry ok: " + typeof(ChangeSession).FullName);
+          EOF
+          # --packages isolates the global-packages folder so a cached copy can
+          # never stand in for the registry artifact this step exists to check.
+          for i in $(seq 1 30); do
+            dotnet restore --no-cache --packages "$RUNNER_TEMP/consumer-pkgs" && break
+            sleep 20
+          done
+          dotnet run --project . --no-restore
