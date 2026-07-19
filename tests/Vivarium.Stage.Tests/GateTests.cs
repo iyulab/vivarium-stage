@@ -95,8 +95,10 @@ public class GateTests
             ["approvedAt"] = "2026-07-16T01:00:00Z",
         });
 
-        var session = await world.SimulatedSessionAsync(restamped);
-        var ex = await Assert.ThrowsAsync<StageRefusedException>(() => session.ApplyAsync("operator-1"));
+        // spec 0.2 §4 enumerates the entry shape, so the SDK validator refuses
+        // this at session admission (ctor) — earlier than the old in-gate guard,
+        // same fail-closed outcome, still never a crash
+        var ex = await Assert.ThrowsAsync<StageRefusedException>(() => world.SimulatedSessionAsync(restamped));
         Assert.Equal(RefusalReason.InvalidChangeset, ex.Reason);
     }
 

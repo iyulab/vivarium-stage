@@ -189,11 +189,36 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         foreach (var op in (patches["schema"] as JsonArray ?? []).OfType<JsonObject>())
             ApplySchemaOp((JsonObject)world["schema"]!["entities"]!, op);
         foreach (var patch in (patches["ui"] as JsonArray ?? []).OfType<JsonObject>())
-            ((JsonObject)world["artifacts"]!)[patch["artifactId"]!.GetValue<string>()] =
-                patch["newContent"]!.GetValue<string>();
+        {
+            var artifacts = (JsonObject)world["artifacts"]!;
+            var artifactId = patch["artifactId"]!.GetValue<string>();
+            artifacts[artifactId] = ResolveUiContent(artifacts, artifactId, patch);
+        }
         foreach (var patch in (patches["data"] as JsonArray ?? []).OfType<JsonObject>())
             foreach (var op in (patch["operations"] as JsonArray ?? []).OfType<JsonObject>())
                 ApplyDataOp((JsonObject)world["data"]!, op);
+    }
+
+    /// <summary>
+    /// whole-artifact@0 carries the full content; verified-diff@0 (spec 0.2)
+    /// is resolved against the branch's live base with mandatory layer-2
+    /// verification (spec §8) — fail-closed: any mismatch aborts the whole
+    /// staging application, never a partial land.
+    /// </summary>
+    private static string ResolveUiContent(JsonObject artifacts, string artifactId, JsonObject patch)
+    {
+        var profile = patch["profile"]?.GetValue<string>();
+        if (profile != "verified-diff@0")
+            return patch["newContent"]!.GetValue<string>();
+        if (artifacts[artifactId] is not JsonValue baseNode || baseNode.GetValue<string>() is not { } baseContent)
+            throw new InvalidOperationException(
+                $"verified-diff patch targets unknown artifact '{artifactId}' (creation is whole-artifact@0's job)");
+        var verdict = VerifiedDiff.VerifyAgainstBase(patch, baseContent);
+        if (!verdict.Ok)
+            throw new InvalidOperationException(
+                $"verified-diff layer-2 verification failed for '{artifactId}': " +
+                string.Join("; ", verdict.Errors.Select(e => $"{e.Path}: {e.Message}")));
+        return verdict.NewContent!;
     }
 
     private static void ApplySchemaOp(JsonObject entities, JsonObject op)

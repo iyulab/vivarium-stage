@@ -144,14 +144,9 @@ public sealed class ChangeSession
         var baseState = (JsonArray)_changeset["provenance"]!["baseState"]!;
         foreach (var node in baseState)
         {
-            // the spec's §8 summary does not yet enumerate entry shape (0.2
-            // candidate) — stage refuses malformed entries rather than crashing
-            if (node is not JsonObject entry
-                || entry["kind"]?.GetValueKind() != System.Text.Json.JsonValueKind.String
-                || entry["ref"]?.GetValueKind() != System.Text.Json.JsonValueKind.String
-                || entry["fingerprint"]?.GetValueKind() != System.Text.Json.JsonValueKind.String)
-                throw new StageRefusedException(RefusalReason.InvalidChangeset,
-                    "malformed provenance.baseState entry — expected { kind, ref, fingerprint } strings (spec §4)");
+            // entry shape and kind vocabulary are spec-validated at admission
+            // (spec 0.2 §4 — the ctor's Validate refuses malformed entries)
+            var entry = (JsonObject)node!;
             var kind = entry["kind"]!.GetValue<string>();
             if (kind == "changeset") continue; // authoring lineage, not live state
             var reference = entry["ref"]!.GetValue<string>();

@@ -89,6 +89,15 @@ record FidelityDeclaration(IReadOnlyDictionary<string, FacetFidelity> PerFacet, 
 record FacetFidelity(string Mode /* full|subset|stub */, string Method /* cow|snapshot|sample|… */, string? SelectionRule = null);
 ```
 
+**UI patch resolution inside `PrepareAsync` (spec 0.2)**: a `whole-artifact@0`
+patch carries its full `newContent`; a `verified-diff@0` patch must be resolved
+against the branch's live base content with the spec's mandatory layer-2
+verification (base fingerprint equality → deterministic fail-closed apply →
+result fingerprint equality — spec §8). Any mismatch aborts the whole prepare;
+a diff never lands partially and never targets an artifact the branch does not
+hold (creation stays `whole-artifact@0`). The reference in-memory adapter is
+the executable example of these semantics.
+
 Design points that landed during implementation:
 
 - **`ActiveState` carries the state ref, not just fingerprints.** The active
