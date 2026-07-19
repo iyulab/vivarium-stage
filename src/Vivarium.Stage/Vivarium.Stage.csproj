@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\vivarium-changeset\sdk\dotnet\Vivarium.Changeset\Vivarium.Changeset.csproj" />
+    <PackageReference Include="Vivarium.Changeset" Version="0.1.0" />
   </ItemGroup>
 
   <PropertyGroup>

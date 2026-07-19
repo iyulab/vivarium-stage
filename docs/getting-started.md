@@ -12,19 +12,13 @@ examples throw on failure, so they cannot silently drift from the API.
 
 ## Install
 
-Vivarium.Stage is not on NuGet yet. Until it is published, consume it as a
-project reference against a checkout (it references the sibling
-[`vivarium-changeset`](https://github.com/iyulab/vivarium-changeset) .NET
-SDK, so check both out side by side):
-
-```xml
-<ItemGroup>
-  <ProjectReference Include="../vivarium-stage/src/Vivarium.Stage/Vivarium.Stage.csproj" />
-</ItemGroup>
+```bash
+dotnet add package Vivarium.Stage
 ```
 
-Requires .NET 10. When the NuGet package lands, this becomes a normal
-`PackageReference` — the API below is the same either way.
+Requires .NET 10. The [`Vivarium.Changeset`](https://www.nuget.org/packages/Vivarium.Changeset)
+.NET SDK comes along as a dependency — Stage consumes the changeset contract,
+it does not define it.
 
 ## 1. Wire the pieces
 
