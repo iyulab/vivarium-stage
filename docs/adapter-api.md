@@ -65,9 +65,10 @@ recorded in the ledger with the apply (branching decision; fault-model §3).
 ## 6. Signatures (finalized with the first adapter — .NET reference)
 
 Resolved in 4.b: the exact boundary is `IBackendAdapter`
-(`src/Vivarium.Stage/Adapters/IBackendAdapter.cs`), first implemented by the
-in-memory reference adapter and the first backend adapter
-(`src/Vivarium.Stage.Adapters.MorphDb`).
+(`src/Vivarium.Stage/Adapters/IBackendAdapter.cs`), implemented by the
+in-memory reference adapter and proven by a first real-backend adapter
+(now consumer-owned — real-backend adapters live with the consuming
+application).
 
 ```csharp
 interface IBackendAdapter

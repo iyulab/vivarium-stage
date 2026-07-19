@@ -31,10 +31,9 @@ Requires .NET 10. When the NuGet package lands, this becomes a normal
 A lifecycle run needs two things you choose: a **backend adapter** (where
 the application state lives) and a **ledger store** (where the audit trail
 lives). The in-memory reference implementations are real, fully functional
-members of the API — use them for tests, demos, and this guide; swap in a
-real adapter (e.g. the [first shipped
-adapter](../src/Vivarium.Stage.Adapters.MorphDb)) and a durable
-`ILedgerStore` for production.
+members of the API — use them for tests, demos, and this guide; swap in
+your application's backend adapter (see [adapter-api.md](adapter-api.md))
+and a durable `ILedgerStore` for production.
 
 ```csharp
 using System.Text.Json.Nodes;
@@ -213,10 +212,10 @@ Everything above ran against the in-memory adapter. Real backends implement
 `PrepareAsync`, `FlipAsync`, `DiscardAsync`) plus a **capability manifest**
 declaring what the backend can honestly promise (atomic flip or not,
 branching fidelity per facet). The contract, including who owns what, is
-specified in [adapter-api.md](adapter-api.md); the [first shipped
-adapter](../src/Vivarium.Stage.Adapters.MorphDb) is the reference
-implementation against a live backend service (project-per-state branching, atomic
-flip via a control-table transaction).
+specified in [adapter-api.md](adapter-api.md). The signatures were
+finalized against a live backend service (project-per-state branching,
+atomic flip via a control-table transaction); real-backend adapters are
+owned by the consuming application, not this repository.
 
 Two rules adapters live by:
 

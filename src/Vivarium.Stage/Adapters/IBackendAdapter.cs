@@ -8,8 +8,8 @@ namespace Vivarium.Stage.Adapters;
 /// primitive. It never sees approval semantics, ledger contents, or how
 /// changesets were authored — it consumes prepared facet operations only.
 ///
-/// Signatures are v0 — finalized with the first adapter (MorphDB) and
-/// recorded in docs/adapter-api.md as they land.
+/// Signatures are v0 — finalized against the first real-backend adapter
+/// (consumer-owned) and recorded in docs/adapter-api.md.
 /// </summary>
 public interface IBackendAdapter
 {
