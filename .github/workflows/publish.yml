@@ -1,7 +1,12 @@
 name: publish
 
-# 0.X release train: pushing a version tag (v0.0.2, ...) publishes Vivarium.Stage
-# to NuGet, then verifies it from the registry as a fresh consumer.
+# 0.X release train: pushing a version tag (v0.0.1, v0.0.2, ...) publishes
+# Vivarium.Stage to NuGet, then verifies it from the registry as a fresh
+# consumer.
+#
+# Plain `v*` because this repo ships exactly one artifact — the tag has nothing
+# to disambiguate. Repos that ship several (vivarium-changeset: npm + NuGet)
+# prefix the tag with the artifact instead (`ts-v*` / `dotnet-v*`).
 #
 # Ordering constraint: Stage's package declares a dependency on Vivarium.Changeset
 # (the ProjectReference to the sibling checkout becomes a package dependency at
