@@ -1,4 +1,4 @@
-# Fault model — apply crash-consistency (v0.1)
+# Fault model — apply crash-consistency (v0.2)
 
 Normative failure model for the Stage apply lifecycle. It exists to make the
 first failure mode in the README — the half-applied change — structurally
@@ -39,10 +39,25 @@ violation of this model.
 
 The release ledger records two entries per apply: `apply-started` (before
 flip: changeset fingerprint, branch fidelity declaration, actor) and
-`apply-completed` (after flip). Recovery after F5 finds a started-without-
+`apply-completed` (after flip). Rollback mirrors the pair (`rollback-started`
+/ `rollback-completed`). Recovery after F5/F6 finds a started-without-
 completed entry and reconciles by reading which state is active — the
-active state's fingerprint decides, the ledger never guesses. Entries are
-append-only; reconciliation appends, never rewrites.
+active state decides, the ledger never guesses. Entries are append-only;
+reconciliation appends, never rewrites.
+
+Reconciliation is total over exactly this truth table (pending kind ×
+active state ref):
+
+| Pending | Active == new ref | Active == previous ref | Active == neither |
+| --- | --- | --- | --- |
+| `apply-started` | `apply-completed` | `apply-aborted` | **unresolved** |
+| `rollback-started` | `rollback-completed` | `rollback-aborted` | **unresolved** |
+
+An aborted rollback MUST be recorded as `rollback-aborted`, never
+`apply-aborted` — the apply is still in effect, and the audit trail must say
+so. **Unresolved appends nothing**: the active state was changed out-of-band,
+recovery cannot know what happened, and appending a guess would forge the
+audit trail. The pending entry stays visible until an operator resolves it.
 
 ## 4. Adapter contract
 

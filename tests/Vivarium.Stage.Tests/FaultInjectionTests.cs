@@ -150,6 +150,57 @@ public class FaultInjectionTests
     }
 
     [Fact]
+    public async Task F6_CrashBeforeRollbackFlip_RecoveryRecordsRollbackAborted()
+    {
+        var world = new TestWorld();
+        var session = await world.SimulatedSessionAsync();
+        await session.ApplyAsync("operator-1");
+        var postApply = world.Inner.ActiveWorldCanonical(TestWorld.TargetName);
+
+        // crash before the rollback's re-flip landed — the apply is still in effect
+        world.Adapter.Fault = FaultPoint.BeforeFlip;
+        await Assert.ThrowsAsync<SimulatedCrashException>(() => session.RollbackAsync("operator-1", applyToken: "tok-f6b"));
+        Assert.Equal(postApply, world.Inner.ActiveWorldCanonical(TestWorld.TargetName));
+
+        // recovery must say "the rollback aborted" — not "the apply aborted"
+        var outcomes = await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock);
+        Assert.Equal("aborted", Assert.Single(outcomes).Resolution);
+        var entries = await world.Ledger.ReadAllAsync();
+        var reconciled = entries.Last();
+        Assert.Equal("rollback-aborted", reconciled.Kind);
+        Assert.True(reconciled.Reconciled);
+        Assert.Equal("tok-f6b", reconciled.ApplyToken);
+
+        // the audit trail keeps saying the apply is active — because it is
+        var view = LedgerProjection.Replay(entries)[TestWorld.TargetName];
+        Assert.Null(view.PendingStarted);
+        Assert.Equal(session.Fingerprint, view.ActiveChangesetFingerprint);
+    }
+
+    [Fact]
+    public async Task Recovery_ActiveNeitherNewNorPrevious_ReportsUnresolvedAndAppendsNothing()
+    {
+        var world = new TestWorld();
+        var session = await world.SimulatedSessionAsync();
+
+        world.Adapter.Fault = FaultPoint.AfterFlip;
+        await Assert.ThrowsAsync<SimulatedCrashException>(() => session.ApplyAsync("operator-1", applyToken: "tok-u"));
+
+        // out-of-band: something else flipped the target to a third state
+        var oob = await world.Inner.BranchAsync(TestWorld.TargetName);
+        await world.Inner.FlipAsync(TestWorld.TargetName, oob.BranchRef, "oob-token");
+
+        var countBefore = (await world.Ledger.ReadAllAsync()).Count;
+        var outcomes = await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock);
+        Assert.Equal("unresolved", Assert.Single(outcomes).Resolution);
+
+        // never guesses: nothing appended, the pending entry stays visible for the operator
+        var entries = await world.Ledger.ReadAllAsync();
+        Assert.Equal(countBefore, entries.Count);
+        Assert.NotNull(LedgerProjection.Replay(entries)[TestWorld.TargetName].PendingStarted);
+    }
+
+    [Fact]
     public async Task FlipIsIdempotentUnderApplyToken()
     {
         var world = new TestWorld();

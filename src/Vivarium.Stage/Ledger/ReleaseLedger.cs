@@ -11,7 +11,7 @@ namespace Vivarium.Stage.Ledger;
 /// </summary>
 public sealed record LedgerEntry(
     long Seq,
-    string Kind, // apply-started | apply-completed | rollback-started | rollback-completed | apply-aborted
+    string Kind, // apply-started | apply-completed | rollback-started | rollback-completed | apply-aborted | rollback-aborted
     string Target,
     string ChangesetFingerprint,
     string ApplyToken,
@@ -23,7 +23,7 @@ public sealed record LedgerEntry(
     bool Reconciled = false)
 {
     public static readonly string[] Kinds =
-        ["apply-started", "apply-completed", "rollback-started", "rollback-completed", "apply-aborted"];
+        ["apply-started", "apply-completed", "rollback-started", "rollback-completed", "apply-aborted", "rollback-aborted"];
 
     public JsonObject ToJson()
     {

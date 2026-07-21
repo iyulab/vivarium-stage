@@ -38,6 +38,7 @@ public static class LedgerProjection
                     active[e.Target] = (e.NewStateRef, e.ChangesetFingerprint);
                     break;
                 case "apply-aborted":
+                case "rollback-aborted":
                     if (pending.TryGetValue(e.Target, out var aborted) && aborted.ApplyToken == e.ApplyToken)
                         pending.Remove(e.Target);
                     break;

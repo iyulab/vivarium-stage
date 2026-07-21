@@ -3,12 +3,15 @@ using Vivarium.Stage.Ledger;
 
 namespace Vivarium.Stage;
 
-public sealed record RecoveryOutcome(string Target, string ApplyToken, string Resolution); // completed | aborted | none
+public sealed record RecoveryOutcome(string Target, string ApplyToken, string Resolution); // completed | aborted | unresolved
 
 /// <summary>
-/// Post-crash ledger reconciliation (fault-model §3, F5): a started-without-
+/// Post-crash ledger reconciliation (fault-model §3, F5/F6): a started-without-
 /// completed entry is resolved by reading which state is actually active —
-/// the active state's fingerprint decides, the ledger never guesses.
+/// the active state decides, the ledger never guesses. When the active state
+/// is neither the started entry's new nor previous ref (out-of-band change),
+/// recovery reports <c>unresolved</c> and appends nothing: an append here
+/// would be a guess forged into an append-only audit trail.
 /// Reconciliation appends; it never rewrites.
 /// </summary>
 public static class StageRecovery
@@ -25,18 +28,27 @@ public static class StageRecovery
             if (view.PendingStarted is not { } started) continue;
 
             var active = await adapter.ActiveStateAsync(target, ct).ConfigureAwait(false);
-            var now = clock.GetUtcNow().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
-            var flipHappened = active.StateRef == started.NewStateRef;
-            var completionKind = started.Kind == "rollback-started"
-                ? (flipHappened ? "rollback-completed" : "apply-aborted")
-                : (flipHappened ? "apply-completed" : "apply-aborted");
+            var isRollback = started.Kind == "rollback-started";
+            var completionKind =
+                active.StateRef == started.NewStateRef
+                    ? (isRollback ? "rollback-completed" : "apply-completed")
+                : active.StateRef == started.PreviousStateRef
+                    ? (isRollback ? "rollback-aborted" : "apply-aborted")
+                : null; // neither old nor new — refusing to guess (fixed principle 3)
+            if (completionKind is null)
+            {
+                outcomes.Add(new RecoveryOutcome(target, started.ApplyToken, "unresolved"));
+                continue;
+            }
 
+            var now = clock.GetUtcNow().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
             await ledger.AppendAsync(completionKind, target, started.ChangesetFingerprint,
                 started.ApplyToken, "stage-recovery", now,
                 previousStateRef: started.PreviousStateRef, newStateRef: started.NewStateRef,
                 reconciled: true, ct: ct).ConfigureAwait(false);
 
-            outcomes.Add(new RecoveryOutcome(target, started.ApplyToken, flipHappened ? "completed" : "aborted"));
+            outcomes.Add(new RecoveryOutcome(target, started.ApplyToken,
+                completionKind.EndsWith("-completed") ? "completed" : "aborted"));
         }
         return outcomes;
     }

@@ -77,6 +77,43 @@ public sealed class ChangeSession
         State = SessionState.Proposed;
     }
 
+    /// <summary>
+    /// Reconstruct an Applied session after a process restart — verified, never
+    /// asserted (fault-model §3: the ledger and the active state decide). This
+    /// is what keeps "every apply has a return path" (fixed principle 4) true
+    /// across process lifetimes: rollback needs an Applied session, and a
+    /// restarted host has no other constitutional way to obtain one.
+    /// Refuses unless (1) the target has no unreconciled pending entry (run
+    /// <see cref="StageRecovery"/> first), (2) the target's latest completed
+    /// ledger entry is an <c>apply-completed</c> of exactly this changeset, and
+    /// (3) the live active state ref equals that entry's new state ref.
+    /// </summary>
+    public static async Task<ChangeSession> RehydrateAppliedAsync(
+        JsonObject changeset, string target, IBackendAdapter adapter, ReleaseLedger ledger,
+        StagePolicy? policy = null, TimeProvider? clock = null, CancellationToken ct = default)
+    {
+        // the constructor runs the admission gates (spec validity, fingerprint)
+        var session = new ChangeSession(changeset, target, adapter, ledger, policy, clock);
+
+        var entries = await ledger.ReadAllAsync(ct).ConfigureAwait(false);
+        LedgerProjection.Replay(entries).TryGetValue(target, out var view);
+        if (view?.PendingStarted is not null)
+            throw new StageRefusedException(RefusalReason.InvalidStateTransition,
+                $"target '{target}' has an unreconciled started entry (token {view.PendingStarted.ApplyToken}) — run recovery before rehydrating");
+        var latest = view?.AppliedHistory.LastOrDefault();
+        if (latest is null || latest.Kind != "apply-completed" || latest.ChangesetFingerprint != session.Fingerprint)
+            throw new StageRefusedException(RefusalReason.InvalidStateTransition,
+                $"the ledger's latest completed entry for '{target}' is not an apply of changeset {session.Fingerprint} — nothing to rehydrate");
+
+        var active = await adapter.ActiveStateAsync(target, ct).ConfigureAwait(false);
+        if (latest.NewStateRef is null || active.StateRef != latest.NewStateRef)
+            throw new StageRefusedException(RefusalReason.DriftGate,
+                $"live active state '{active.StateRef}' does not match the ledger's applied state '{latest.NewStateRef}' — refusing, not guessing");
+
+        session.State = SessionState.Applied;
+        return session;
+    }
+
     private void RequireState(SessionState expected, string operation)
     {
         if (State != expected)

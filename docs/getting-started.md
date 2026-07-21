@@ -164,7 +164,29 @@ Every refusal carries a `RefusalReason` (`InvalidChangeset`,
 `InvalidStateTransition`), so hosts can present *why* without parsing
 messages.
 
-## 5. Rollback, and the ledger that makes it possible
+## 5. Surviving a restart: rehydration
+
+Rollback requires an Applied session — but a host process that restarts has
+lost its in-memory objects, and re-driving the lifecycle is impossible by
+design (the drift gate refuses: live has moved past the changeset's
+`baseState`). `RehydrateAppliedAsync` reconstructs the Applied session from
+durable state instead — **verified, never asserted**: it refuses unless the
+ledger's latest completed entry is an apply of exactly this changeset *and*
+the live active state matches what that entry recorded (an unreconciled
+crash entry must be resolved by `StageRecovery` first):
+
+```csharp
+var rehydrated = await ChangeSession.RehydrateAppliedAsync(changeset, "app", adapter, ledger);
+
+if (rehydrated.State != SessionState.Applied) throw new Exception("rehydration reconstructs the applied session");
+if (rehydrated.Fingerprint != changeset["fingerprint"]!.GetValue<string>())
+    throw new Exception("rehydration is bound to the exact changeset");
+```
+
+This is what keeps "every apply has a return path" true across process
+lifetimes, not just within one.
+
+## 6. Rollback, and the ledger that makes it possible
 
 Rollback is not an afterthought — the apply recorded its return path in the
 ledger, and the rollback flips back to it atomically:
