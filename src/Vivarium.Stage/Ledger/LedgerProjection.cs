@@ -1,6 +1,13 @@
 namespace Vivarium.Stage.Ledger;
 
-/// <summary>Replayed view of one target's release history.</summary>
+/// <summary>
+/// Replayed view of one target's release history.
+/// <see cref="ActiveChangesetFingerprint"/> names the changeset whose apply
+/// produced the active state — after a rollback it follows the lineage back
+/// (the prior apply's fingerprint, or null when the active state precedes
+/// any recorded apply). It never names the rolled-back changeset: a
+/// changeset that is no longer live must not be reported as live.
+/// </summary>
 public sealed record TargetProjection(
     string Target,
     IReadOnlyList<LedgerEntry> AppliedHistory,
@@ -20,6 +27,7 @@ public static class LedgerProjection
         var applied = new Dictionary<string, List<LedgerEntry>>();
         var active = new Dictionary<string, (string? StateRef, string? Fingerprint)>();
         var pending = new Dictionary<string, LedgerEntry>();
+        var lineage = new Dictionary<string, string>(); // stateRef → fingerprint of the apply that produced it
 
         foreach (var e in entries.OrderBy(e => e.Seq))
         {
@@ -35,7 +43,18 @@ public static class LedgerProjection
                     if (pending.TryGetValue(e.Target, out var started) && started.ApplyToken == e.ApplyToken)
                         pending.Remove(e.Target);
                     (applied.TryGetValue(e.Target, out var list) ? list : applied[e.Target] = []).Add(e);
-                    active[e.Target] = (e.NewStateRef, e.ChangesetFingerprint);
+                    if (e.Kind == "apply-completed")
+                    {
+                        if (e.NewStateRef is not null) lineage[e.NewStateRef] = e.ChangesetFingerprint;
+                        active[e.Target] = (e.NewStateRef, e.ChangesetFingerprint);
+                    }
+                    else
+                    {
+                        // a rollback re-activates an earlier state: its fingerprint is
+                        // whatever apply produced that state — never the rolled-back one
+                        active[e.Target] = (e.NewStateRef,
+                            e.NewStateRef is not null && lineage.TryGetValue(e.NewStateRef, out var fp) ? fp : null);
+                    }
                     break;
                 case "apply-aborted":
                 case "rollback-aborted":

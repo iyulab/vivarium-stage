@@ -1,9 +1,59 @@
+using System.Text.Json.Nodes;
+using Vivarium.Changeset;
 using Vivarium.Stage.Ledger;
 
 namespace Vivarium.Stage.Tests;
 
 public class LedgerTests
 {
+    [Fact]
+    public async Task RollbackRestoresLineage_SeedStateHasNoFingerprint()
+    {
+        var world = new TestWorld();
+        var session = await world.SimulatedSessionAsync();
+        await session.ApplyAsync("operator-1");
+        await session.RollbackAsync("operator-1");
+
+        // the active state is the seed — it precedes any recorded apply, so no
+        // changeset fingerprint may claim it (reporting the rolled-back one
+        // would say "this changeset is live" about a state it no longer is)
+        var view = LedgerProjection.Replay(await world.Ledger.ReadAllAsync())[TestWorld.TargetName];
+        Assert.Equal("live-app", view.ActiveStateRef);
+        Assert.Null(view.ActiveChangesetFingerprint);
+    }
+
+    [Fact]
+    public async Task RollbackRestoresLineage_PriorApplyFingerprintReturns()
+    {
+        var world = new TestWorld();
+        var sessionA = await world.SimulatedSessionAsync();
+        await sessionA.ApplyAsync("operator-1");
+
+        // a second changeset written against the post-A live state
+        var active = await world.Inner.ActiveStateAsync(TestWorld.TargetName);
+        const string v3 = "export function LoanScreen() {\n  return <Form fields={[amount, dueDate, note]} />;\n}";
+        var docB = new ChangesetBuilder(
+                intent: "Add a note field to the loan screen",
+                producedBy: "test-suite",
+                createdAt: "2026-07-16T02:00:00Z",
+                baseState: [new BaseStateEntry("ui-artifact", "screen-loans", active.FacetFingerprints["screen-loans"])])
+            .AddUiPatch("screen-loans", TestWorld.NewArtifact, v3, "Renders the note field")
+            .Finalize();
+        docB["approvals"] = new JsonArray(new JsonObject
+        {
+            ["fingerprint"] = docB["fingerprint"]!.GetValue<string>(),
+            ["approvedBy"] = "reviewer-1",
+            ["approvedAt"] = "2026-07-16T03:00:00Z",
+        });
+        var sessionB = await world.SimulatedSessionAsync(docB);
+        await sessionB.ApplyAsync("operator-1");
+        await sessionB.RollbackAsync("operator-1");
+
+        // rolling back B lands on the state A produced — the lineage follows
+        var view = LedgerProjection.Replay(await world.Ledger.ReadAllAsync())[TestWorld.TargetName];
+        Assert.Equal(sessionA.Fingerprint, view.ActiveChangesetFingerprint);
+    }
+
     [Fact]
     public async Task WriteAheadOrdering_StartedPrecedesFlipPrecedesCompleted()
     {
