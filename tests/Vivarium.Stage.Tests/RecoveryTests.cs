@@ -36,7 +36,7 @@ public class RecoveryTests
 
         // refusing to guess means appending nothing — the pending entry stands
         var entries = await ledger.ReadAllAsync();
-        Assert.Equal(1, entries.Count);
+        Assert.Single(entries);
         Assert.NotNull(LedgerProjection.Replay(entries)["ghost"].PendingStarted);
     }
 
@@ -113,6 +113,63 @@ public class RecoveryTests
     }
 
     [Fact]
+    public async Task OutcomeCarriesThePendingOperation_ApplyAndRollback()
+    {
+        // apply reconciled as completed
+        var applied = new TestWorld();
+        var s1 = await applied.SimulatedSessionAsync();
+        applied.Adapter.Fault = FaultPoint.AfterFlip;
+        await Assert.ThrowsAsync<SimulatedCrashException>(() => s1.ApplyAsync("operator-1"));
+        var apply = Assert.Single(await StageRecovery.RecoverAsync(applied.Ledger, applied.Adapter, applied.Clock));
+        Assert.Equal("apply", apply.PendingOperation);
+        Assert.Equal("completed", apply.Resolution);
+
+        // rollback reconciled as aborted — the pair that must never read as an apply
+        var rolled = new TestWorld();
+        var s2 = await rolled.SimulatedSessionAsync();
+        await s2.ApplyAsync("operator-1");
+        rolled.Adapter.Fault = FaultPoint.BeforeFlip;
+        await Assert.ThrowsAsync<SimulatedCrashException>(() => s2.RollbackAsync("operator-1"));
+        var rollback = Assert.Single(await StageRecovery.RecoverAsync(rolled.Ledger, rolled.Adapter, rolled.Clock));
+        Assert.Equal("rollback", rollback.PendingOperation);
+        Assert.Equal("aborted", rollback.Resolution);
+
+        // operation + resolution reconstruct the appended entry kind — the join
+        // consumers used to make against a ledger snapshot
+        Assert.Equal((await rolled.Ledger.ReadAllAsync()).Last().Kind,
+            $"{rollback.PendingOperation}-{rollback.Resolution}");
+    }
+
+    [Fact]
+    public async Task UnresolvedOutcomesStillCarryTheOperation()
+    {
+        // active-state-unreadable: nothing was reconciled, yet the ledger knows
+        // which operation is pending — an outcome must not drop it
+        var adapter = new InMemoryBackendAdapter(); // knows no target
+        var store = new InMemoryLedgerStore();
+        var ledger = new ReleaseLedger(store);
+        await ledger.AppendAsync("rollback-started", "ghost", "sha256:ghost", "tok-ghost", "operator-1",
+            "2026-07-22T00:00:00.000Z", previousStateRef: "live-ghost", newStateRef: "prior-1");
+
+        var unreadable = Assert.Single(await StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider()));
+        Assert.Equal("unresolved", unreadable.Resolution);
+        Assert.Equal("active-state-unreadable", unreadable.Reason);
+        Assert.Equal("rollback", unreadable.PendingOperation);
+
+        // active-matches-neither: the other unresolved cell, same requirement
+        var world = new TestWorld();
+        var session = await world.SimulatedSessionAsync();
+        world.Adapter.Fault = FaultPoint.AfterFlip;
+        await Assert.ThrowsAsync<SimulatedCrashException>(() => session.ApplyAsync("operator-1"));
+        var oob = await world.Inner.BranchAsync(TestWorld.TargetName);
+        await world.Inner.FlipAsync(TestWorld.TargetName, oob.BranchRef, "oob");
+
+        var neither = Assert.Single(await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock));
+        Assert.Equal("active-matches-neither", neither.Reason);
+        Assert.Equal("apply", neither.PendingOperation);
+    }
+
+    [Fact]
     public async Task CancellationPropagates_ItIsNotAnUnreadableActiveState()
     {
         var adapter = new CancellingAdapter();
@@ -125,7 +182,7 @@ public class RecoveryTests
         // a cancelled caller must not be reported as "we couldn't read the pointer"
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider(), cts.Token));
-        Assert.Equal(1, (await ledger.ReadAllAsync()).Count); // nothing appended
+        Assert.Single(await ledger.ReadAllAsync()); // nothing appended
     }
 
     /// <summary>Adapter whose ActiveStateAsync honours cancellation — the case recovery must not swallow.</summary>

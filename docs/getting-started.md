@@ -227,13 +227,22 @@ unaccountable target never blocks the rest:
 ```csharp
 foreach (var outcome in await StageRecovery.RecoverAsync(ledger, adapter))
 {
+    // PendingOperation: apply | rollback   (which operation was in flight)
     // Resolution: completed | aborted | unresolved
     // Reason: active-matches-new | active-matches-previous
     //       | active-matches-neither | active-state-unreadable
     if (outcome.Resolution == "unresolved")
         Console.WriteLine($"operator needed for {outcome.Target}: {outcome.Reason}");
+    else // the two axes name the entry reconciliation appended
+        Console.WriteLine($"{outcome.Target}: {outcome.PendingOperation}-{outcome.Resolution}");
 }
 ```
+
+The verdict carries both axes because an aborted rollback is not an aborted
+apply: with `rollback` + `aborted` the apply is still in effect, with `apply` +
+`aborted` nothing landed. `PendingOperation` is present on every outcome —
+including the `unresolved` ones, where the ledger still knows what was pending —
+so reporting never needs a second read of the ledger to say what happened.
 
 `unresolved` means recovery **appended nothing** — the active state either
 moved out-of-band or could not be read at all (an adapter must throw for a

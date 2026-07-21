@@ -1,4 +1,4 @@
-# Fault model — apply crash-consistency (v0.3)
+# Fault model — apply crash-consistency (v0.4)
 
 Normative failure model for the Stage apply lifecycle. It exists to make the
 first failure mode in the README — the half-applied change — structurally
@@ -52,6 +52,16 @@ active state ref):
 | --- | --- | --- | --- | --- |
 | `apply-started` | `apply-completed` | `apply-aborted` | **unresolved** | **unresolved** |
 | `rollback-started` | `rollback-completed` | `rollback-aborted` | **unresolved** | **unresolved** |
+
+The verdict returned to the caller (`RecoveryOutcome`) reports this table on
+its own axes rather than as a single opaque label: the **row** is
+`PendingOperation` (`apply` | `rollback`), the **cell** is `Resolution`
+(`completed` | `aborted` | `unresolved`), and the **column** is `Reason`
+(`active-matches-new` | `active-matches-previous` | `active-matches-neither` |
+`active-state-unreadable`). For the resolved cells the appended entry kind is
+exactly `{PendingOperation}-{Resolution}`. A consumer therefore reads the table
+straight off the outcome — it never has to re-read the ledger to learn which
+row it was on.
 
 An aborted rollback MUST be recorded as `rollback-aborted`, never
 `apply-aborted` — the apply is still in effect, and the audit trail must say

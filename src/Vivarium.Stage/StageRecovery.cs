@@ -4,19 +4,39 @@ using Vivarium.Stage.Ledger;
 namespace Vivarium.Stage;
 
 /// <summary>
-/// One target's reconciliation verdict. <see cref="Resolution"/> is what
-/// recovery concluded (<c>completed</c> | <c>aborted</c> | <c>unresolved</c>);
-/// <see cref="Reason"/> is why, in the vocabulary of the fault-model §3 truth
-/// table — an operator needs to tell "the pointer says something else" from
-/// "the pointer could not be read at all", because those call for different
+/// One target's reconciliation verdict, on the two axes the fault-model §3
+/// truth table keeps apart. <see cref="PendingOperation"/> is which operation
+/// was in flight (<c>apply</c> | <c>rollback</c> — the truth table's row) and
+/// <see cref="Resolution"/> is what recovery concluded about it
+/// (<c>completed</c> | <c>aborted</c> | <c>unresolved</c>): together they name
+/// the entry kind reconciliation appended (<c>rollback</c> + <c>aborted</c> →
+/// <c>rollback-aborted</c>), which is why an aborted rollback can never be read
+/// as an aborted apply. <see cref="Reason"/> is why, in the same vocabulary —
+/// an operator needs to tell "the pointer says something else" from "the
+/// pointer could not be read at all", because those call for different
 /// interventions.
 /// </summary>
-public sealed record RecoveryOutcome(
-    string Target,
-    string ApplyToken,
-    string ChangesetFingerprint,
-    string Resolution, // completed | aborted | unresolved
-    string Reason); // active-matches-new | active-matches-previous | active-matches-neither | active-state-unreadable
+/// <remarks>
+/// Members are init-only properties rather than positional: this record grows
+/// as recovery learns to report more of what the ledger already knows, and with
+/// positional members every such addition breaks consumers who deconstruct it.
+/// One break (0.4.0) to stop breaking.
+/// </remarks>
+public sealed record RecoveryOutcome
+{
+    public required string Target { get; init; }
+    public required string ApplyToken { get; init; }
+    public required string ChangesetFingerprint { get; init; }
+
+    /// <summary>apply | rollback — the operation the reconciled pending entry started.</summary>
+    public required string PendingOperation { get; init; }
+
+    /// <summary>completed | aborted | unresolved</summary>
+    public required string Resolution { get; init; }
+
+    /// <summary>active-matches-new | active-matches-previous | active-matches-neither | active-state-unreadable</summary>
+    public required string Reason { get; init; }
+}
 
 /// <summary>
 /// Post-crash ledger reconciliation (fault-model §3, F5/F6): a started-without-
@@ -57,7 +77,7 @@ public static class StageRecovery
                 continue;
             }
 
-            var isRollback = started.Kind == "rollback-started";
+            var isRollback = OperationOf(started) == "rollback";
             var (completionKind, reason) =
                 active.StateRef == started.NewStateRef
                     ? (isRollback ? "rollback-completed" : "apply-completed", "active-matches-new")
@@ -78,12 +98,32 @@ public static class StageRecovery
                 previousStateRef: started.PreviousStateRef, newStateRef: started.NewStateRef,
                 reconciled: true, ct: ct).ConfigureAwait(false);
 
-            outcomes.Add(new RecoveryOutcome(target, started.ApplyToken, started.ChangesetFingerprint,
+            outcomes.Add(Outcome(target, started,
                 completionKind.EndsWith("-completed") ? "completed" : "aborted", reason));
         }
         return outcomes;
     }
 
     private static RecoveryOutcome Unresolved(string target, LedgerEntry started, string reason) =>
-        new(target, started.ApplyToken, started.ChangesetFingerprint, "unresolved", reason);
+        Outcome(target, started, "unresolved", reason);
+
+    private static RecoveryOutcome Outcome(string target, LedgerEntry started, string resolution, string reason) =>
+        new()
+        {
+            Target = target,
+            ApplyToken = started.ApplyToken,
+            ChangesetFingerprint = started.ChangesetFingerprint,
+            PendingOperation = OperationOf(started),
+            Resolution = resolution,
+            Reason = reason,
+        };
+
+    /// <summary>
+    /// Total by construction: a projection's pending entry is one of the two
+    /// started kinds (<see cref="LedgerProjection"/>), and the ledger's write
+    /// door rejects any kind outside that vocabulary — so every outcome,
+    /// including the unresolved ones, carries an operation.
+    /// </summary>
+    private static string OperationOf(LedgerEntry started) =>
+        started.Kind == "rollback-started" ? "rollback" : "apply";
 }
