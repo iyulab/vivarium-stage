@@ -98,6 +98,37 @@ public class LedgerTests
     }
 
     [Fact]
+    public async Task AppendRefusesAnUnknownKind_TheLedgerCannotBeCorrupted()
+    {
+        var store = new InMemoryLedgerStore();
+        var ledger = new ReleaseLedger(store);
+
+        // FromJson already refuses unknown kinds; the write path must agree.
+        // Without this the ledger accepts a typo forever (append-only), Replay
+        // silently ignores it, and the export can no longer be re-imported.
+        await Assert.ThrowsAsync<ArgumentException>(() => ledger.AppendAsync(
+            "apply-complete", "t", "sha256:x", "tok", "actor", "2026-07-21T00:00:00.000Z"));
+
+        Assert.Empty(await ledger.ReadAllAsync()); // refused before it was written
+    }
+
+    [Fact]
+    public async Task EveryDeclaredKindIsAppendable()
+    {
+        var store = new InMemoryLedgerStore();
+        var ledger = new ReleaseLedger(store);
+
+        foreach (var kind in LedgerEntry.Kinds)
+            await ledger.AppendAsync(kind, "t", "sha256:x", "tok", "actor", "2026-07-21T00:00:00.000Z");
+
+        // the guard admits exactly the declared vocabulary, and what it admits
+        // still round-trips through the export
+        var entries = await ledger.ReadAllAsync();
+        Assert.Equal(LedgerEntry.Kinds.Length, entries.Count);
+        Assert.Equal(entries.Count, ReleaseLedger.ParseExport(await ledger.ExportJsonAsync()).Count);
+    }
+
+    [Fact]
     public async Task ExportIsMachineVerifiableAndRoundTrips()
     {
         var world = new TestWorld();

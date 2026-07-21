@@ -106,6 +106,15 @@ public sealed class ReleaseLedger(ILedgerStore store)
         string? previousStateRef = null, string? newStateRef = null, bool reconciled = false,
         CancellationToken ct = default)
     {
+        // The vocabulary is checked at the door, not only on re-import: the
+        // ledger is append-only, so a typo admitted here is permanent — Replay
+        // would ignore the entry (leaving a pending that never resolves) and
+        // the export would no longer round-trip through FromJson.
+        if (!LedgerEntry.Kinds.Contains(kind))
+            throw new ArgumentException(
+                $"unknown ledger entry kind: {kind} (expected one of: {string.Join(", ", LedgerEntry.Kinds)})",
+                nameof(kind));
+
         await _appendLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
