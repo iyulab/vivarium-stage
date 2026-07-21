@@ -34,7 +34,7 @@ An adapter MUST publish, machine-readably, before first use:
 | `branch(target)` | Create an isolated staging world from the target's current state. Returns a branch reference **plus a fidelity declaration** (§4) — a branch without one cannot enter simulation (design rule from the branching decision). No live effect. |
 | `prepare(branch, facetOps)` | Stage the changeset's operations (logical schema ops, data ops, UI artifact payloads) into the branch. Idempotent per changeset fingerprint; MUST report per-facet completion so Stage can confirm *all* facets before any flip. No live effect. |
 | `flip(target, stateRef, applyToken)` | Atomically activate `stateRef` (a prepared branch, or a previously active state for rollback). Succeeds completely or has no effect; idempotent under `applyToken` so recovery may re-issue it (fault-model F4/F6). |
-| `activeState(target)` | Return deterministic fingerprint(s) of the currently active base state — Stage's input for drift refusal and for post-crash ledger reconciliation (fault-model F5). |
+| `activeState(target)` | Return deterministic fingerprint(s) of the currently active base state — Stage's input for drift refusal and for post-crash ledger reconciliation (fault-model F5). For a target the adapter does not know, it MUST throw rather than invent a pointer (see §Error taxonomy). |
 | `discard(branch)` | Release a staging world and its resources. Always safe (staging never touches live state). |
 
 Simulation is *not* an adapter operation: Stage and the host drive whatever
@@ -111,6 +111,18 @@ Design points that landed during implementation:
   adapter failures during branch/prepare are retryable-or-discardable (F1/F2);
   `FlipAsync` re-issued with a used token for a *different* state ref MUST
   throw — same token + same state ref is the idempotent recovery no-op.
+- **Unknown targets: throw, never invent.** `ActiveStateAsync` on a target the
+  adapter does not know (state lost, partially restored, renamed) MUST throw.
+  Returning a fabricated or empty `ActiveState` would let a *guess* reach the
+  gates: the drift gate would compare against fingerprints that describe
+  nothing, and recovery would reconcile the ledger against a pointer nobody
+  owns. Throwing is the honest answer, and Stage is built to receive it —
+  recovery translates it into an `unresolved` verdict
+  (`Reason = "active-state-unreadable"`, nothing appended) and carries on with
+  the other targets, while the apply path surfaces it as a failed apply.
+  The exception type is not specified in v0; adapters should use whatever
+  their platform makes idiomatic (the reference adapter throws
+  `InvalidOperationException`).
 - **First adapter's flip primitive**: a stage-owned control project holds a
   targets pointer table and a flip log; one backend transaction (PostgreSQL ACID)
   inserts the unique flip token and repoints the target row. Atomic, durable,

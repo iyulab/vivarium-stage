@@ -1,4 +1,4 @@
-# Fault model — apply crash-consistency (v0.2)
+# Fault model — apply crash-consistency (v0.3)
 
 Normative failure model for the Stage apply lifecycle. It exists to make the
 first failure mode in the README — the half-applied change — structurally
@@ -48,16 +48,29 @@ reconciliation appends, never rewrites.
 Reconciliation is total over exactly this truth table (pending kind ×
 active state ref):
 
-| Pending | Active == new ref | Active == previous ref | Active == neither |
-| --- | --- | --- | --- |
-| `apply-started` | `apply-completed` | `apply-aborted` | **unresolved** |
-| `rollback-started` | `rollback-completed` | `rollback-aborted` | **unresolved** |
+| Pending | Active == new ref | Active == previous ref | Active == neither | Active unreadable |
+| --- | --- | --- | --- | --- |
+| `apply-started` | `apply-completed` | `apply-aborted` | **unresolved** | **unresolved** |
+| `rollback-started` | `rollback-completed` | `rollback-aborted` | **unresolved** | **unresolved** |
 
 An aborted rollback MUST be recorded as `rollback-aborted`, never
 `apply-aborted` — the apply is still in effect, and the audit trail must say
-so. **Unresolved appends nothing**: the active state was changed out-of-band,
-recovery cannot know what happened, and appending a guess would forge the
-audit trail. The pending entry stays visible until an operator resolves it.
+so. **Unresolved appends nothing** and the pending entry stays visible until
+an operator resolves it; appending a guess would forge the audit trail.
+
+The two unresolved cells are distinct situations and MUST be reported
+distinctly (`active-matches-neither` vs `active-state-unreadable`), because
+they call for different intervention: the first says the target moved
+out-of-band, the second that the adapter cannot account for the target at all
+(state lost, partially restored, renamed — adapters MUST throw rather than
+invent a pointer, see adapter-api §Error taxonomy).
+
+**Recovery is per-target and total.** A target whose active pointer cannot be
+read yields a verdict, not an exception: one unaccountable target MUST NOT
+abort reconciliation of the others. Two things still propagate rather than
+becoming verdicts — caller cancellation (which is not a judgement about any
+target) and a failed ledger append (which means the audit trail itself is
+broken, so no verdict about anything is trustworthy).
 
 ## 4. Adapter contract
 
@@ -74,7 +87,7 @@ machine-readably:
   degradation. Honesty over pretense — the same rule the README's principle 5
   applies to simulation.
 
-## 5. Out of scope (v0.1)
+## 5. Out of scope
 
 - Concurrent applies to one target (v0 serializes per target).
 - Cross-target transactions (one changeset, one target).

@@ -219,7 +219,27 @@ if (ReleaseLedger.ParseExport(export).Count != entries.Count)
 
 A `started` entry without its `completed` pair (a crash mid-apply) surfaces
 in `PendingStarted` — the input to `StageRecovery`, which reconciles the
-target from the ledger.
+target by reading which state is actually active.
+
+Recovery reports a verdict per target rather than throwing, so one
+unaccountable target never blocks the rest:
+
+```csharp
+foreach (var outcome in await StageRecovery.RecoverAsync(ledger, adapter))
+{
+    // Resolution: completed | aborted | unresolved
+    // Reason: active-matches-new | active-matches-previous
+    //       | active-matches-neither | active-state-unreadable
+    if (outcome.Resolution == "unresolved")
+        Console.WriteLine($"operator needed for {outcome.Target}: {outcome.Reason}");
+}
+```
+
+`unresolved` means recovery **appended nothing** — the active state either
+moved out-of-band or could not be read at all (an adapter must throw for a
+target it does not know rather than invent a pointer). The pending entry
+stays visible until an operator resolves it: Stage refuses rather than
+guessing, here as everywhere.
 
 ## Real backends: the adapter boundary
 
