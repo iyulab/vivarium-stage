@@ -6,7 +6,7 @@ versioning: 0.x — minor for surface changes, patch for fixes. Stage versions
 independently of the changeset spec: it consumes the contract, it does not
 define it.
 
-## 0.5.0 — unreleased
+## 0.5.0 — 2026-08-03
 
 ### Added — an executable conformance suite for backend adapters
 
