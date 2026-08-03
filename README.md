@@ -38,7 +38,7 @@ Preview and release are one repository because they are one state machine: a bra
 ## What this repository contains
 
 - **The lifecycle service.** The state machine above, exposed as an API: create branch, run simulation, gate and execute apply, roll back, inspect history.
-- **The backend adapter boundary.** Stage speaks to schema/data backends through adapters. This repository ships the [boundary contract](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md) and a reference in-memory adapter; real-backend adapters live with the consuming application. The boundary is designed in from the start — Stage must not be un-portable from any one backend.
+- **The backend adapter boundary.** Stage speaks to schema/data backends through adapters. This repository ships the [boundary contract](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md), a reference in-memory adapter, and an **executable conformance suite** that checks any implementation against the contract's clauses — so "does my adapter conform?" is a question you run, not one you read. Real-backend adapters live with the consuming application. The boundary is designed in from the start — Stage must not be un-portable from any one backend.
 - **The release ledger.** An append-only history of what was applied, when, by whom, from which fingerprint — the audit trail a runtime-mutable platform owes its operators.
 - **Live propagation hooks.** After a successful apply, connected clients are told to pick up the new world. The mechanism is adapter/host territory; the hook is Stage's.
 

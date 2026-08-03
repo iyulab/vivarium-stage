@@ -127,3 +127,53 @@ Design points that landed during implementation:
   targets pointer table and a flip log; one backend transaction (PostgreSQL ACID)
   inserts the unique flip token and repoints the target row. Atomic, durable,
   idempotent-under-token — the §2 `atomic-swap` declaration is honest.
+
+## 7. Conformance — this document, executable
+
+Everything above is normative prose. An adapter author could read what their
+implementation must do but had no way to learn whether it did — and the clauses
+that matter most are the ones an adapter's own tests are least likely to reach:
+throwing for an unknown target instead of inventing a pointer, staying
+idempotent when recovery re-issues a flip token, refusing that token for a
+different state, declaring branch fidelity honestly.
+
+`Vivarium.Stage.Conformance.AdapterConformance.RunAsync` checks an
+implementation against these clauses and returns a `ConformanceReport`:
+
+```csharp
+var report = await AdapterConformance.RunAsync(
+    myAdapter,
+    new ConformanceFixture(
+        knownTarget: "fixture-app",      // a target the adapter knows; the run flips it
+        unknownTarget: "no-such-target", // a target it must not know
+        patches: patchesMyAdapterCanStage));
+
+if (!report.AllPassed) throw new Exception(report.ToString());
+```
+
+Properties of the suite, and why:
+
+- **Each check is named for the clause it enforces** — `§3/flip-idempotent-under-token`,
+  `§Error-taxonomy/unknown-target-throws`. A failure says what to read. A check
+  with no clause is not a check: the suite verifies this document, it does not
+  add to it.
+- **It reports rather than throws.** Violations come back as failed checks with
+  detail, so the caller's own test framework decides what to assert and nothing
+  has to be parsed out of a message. The suite takes no test-framework
+  dependency.
+- **`Skipped` is a real outcome.** Where this document does not constrain a case
+  — a facet the manifest is silent about (§2 does not require it to enumerate
+  every facet), a branch that declares no `subset` facet — the check reports
+  unverifiable rather than failing. An over-strict suite that fails honest
+  adapters would be worse than none. Where a check verifies only part of what it
+  appears to, it names the part it could not reach.
+- **Exception *types* are never asserted** — §Error taxonomy leaves them
+  unspecified in v0, so the checks assert only that a throw happened.
+- **It mutates live state.** The run flips the fixture target to a prepared
+  branch and flips it back, so it must be pointed at a disposable fixture and
+  never at production. The restore runs last, always, and is reported as its own
+  check (it is also the rollback primitive, §3) — a mid-run failure still leaves
+  a record of whether the fixture came home.
+
+The reference in-memory adapter passes the full suite; that is the suite's
+own first test.

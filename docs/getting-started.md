@@ -271,6 +271,49 @@ Two rules adapters live by:
   decide whether a change may land — only how state is branched, prepared,
   and flipped.
 
+### Checking your adapter against the contract
+
+You do not have to take the contract on faith. `AdapterConformance` runs it
+against your implementation and hands back a report — including the clauses an
+adapter's own tests rarely reach, like throwing for a target it does not know
+rather than inventing a pointer, and staying idempotent when recovery re-issues
+a flip token:
+
+```csharp
+using Vivarium.Stage.Conformance;
+
+var fixtureAdapter = new InMemoryBackendAdapter();   // swap in your own adapter
+fixtureAdapter.SeedTarget("fixture-app", new JsonObject
+{
+    ["schema"] = new JsonObject { ["entities"] = new JsonObject() },
+    ["data"] = new JsonObject(),
+    ["artifacts"] = new JsonObject { ["screen-main"] = "export default function mount(root) {}" },
+});
+
+var conformance = await AdapterConformance.RunAsync(
+    fixtureAdapter,
+    new ConformanceFixture(
+        KnownTarget: "fixture-app",        // the run FLIPS this target — never production
+        UnknownTarget: "no-such-target",
+        Patches: new JsonObject
+        {
+            ["uiPatches"] = new JsonArray(new JsonObject
+            {
+                ["artifactId"] = "screen-main",
+                ["profile"] = "whole-artifact@0",
+                ["newContent"] = "export default function mount(root) { root.textContent = 'ok'; }",
+            }),
+        }));
+
+if (!conformance.AllPassed) throw new Exception(conformance.ToString());
+```
+
+Each check is named for the clause it enforces (`§Error-taxonomy/unknown-target-throws`),
+so a failure tells you what to read in [adapter-api.md](adapter-api.md) §7.
+The suite reports rather than throws, needs no test framework, and marks a check
+`Skipped` where the contract genuinely does not constrain your adapter — it will
+not fail you for a case the boundary leaves open.
+
 ## Where to go next
 
 - [fault-model.md](fault-model.md) — the partial-failure matrix (F1–F6) and

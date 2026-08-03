@@ -6,7 +6,41 @@ versioning: 0.x — minor for surface changes, patch for fixes. Stage versions
 independently of the changeset spec: it consumes the contract, it does not
 define it.
 
-## 0.4.0 — unreleased
+## 0.5.0 — unreleased
+
+### Added — an executable conformance suite for backend adapters
+
+`Vivarium.Stage.Conformance.AdapterConformance.RunAsync` checks an
+`IBackendAdapter` implementation against the normative boundary in
+[docs/adapter-api.md](docs/adapter-api.md) and returns a structured
+`ConformanceReport`:
+
+```csharp
+var report = await AdapterConformance.RunAsync(
+    myAdapter,
+    new ConformanceFixture(knownTarget: "fixture-app", unknownTarget: "no-such-target", patches));
+
+if (!report.AllPassed) throw new Exception(report.ToString());
+```
+
+Until now the adapter contract was normative prose: an adapter author could
+read what their implementation must do but had no way to find out whether it
+did. The clauses that matter most are also the ones least likely to be
+exercised by an adapter's own tests — throwing for an unknown target instead of
+inventing a pointer, staying idempotent when recovery re-issues a flip token,
+refusing that same token for a different state, and declaring branch fidelity
+honestly. Each check is named for the clause it enforces
+(`adapter-api §Error-taxonomy/unknown-target-throws`), so a failure says what
+to read.
+
+The suite reports rather than throws, takes no test-framework dependency, and
+records `Skipped` where the contract genuinely does not constrain a case — an
+over-strict suite that fails honest adapters would be worse than none. It
+**mutates the fixture target's live state** (it flips, then flips back) and
+must never be pointed at production; the restore runs last and is reported as
+its own check.
+
+## 0.4.0 — 2026-07-22
 
 ### Changed — breaking for consumers who deconstruct `RecoveryOutcome`
 
@@ -133,5 +167,5 @@ Initial NuGet release: the changeset lifecycle core —
   alone, and the export round-trips;
 - the **backend adapter boundary** (`IBackendAdapter`: five operations plus a
   capability manifest declaring what the backend can honestly promise) with a
-  reference in-memory implementation. Real-backend adapters are consumer-owned
-  (umbrella ADR-0014).
+  reference in-memory implementation. Real-backend adapters are consumer-owned —
+  this library knows no specific backend product.
