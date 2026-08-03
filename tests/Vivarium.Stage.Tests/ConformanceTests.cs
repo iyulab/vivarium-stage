@@ -90,6 +90,32 @@ public class ConformanceTests
     }
 
     [Fact]
+    public async Task Accepting_a_malformed_data_operation_fails()
+    {
+        // Silently staging less is the failure the check is really after: the
+        // adapter reports completion for work it did not do, and a false input
+        // goes under the flip.
+        var adapter = new SwallowsMalformedDataOps(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        Assert.Contains(report.Failures, f => f.Id == ConformanceIds.PrepareRefusesMalformedDataOp);
+    }
+
+    [Fact]
+    public async Task Faulting_on_a_malformed_data_operation_fails_too()
+    {
+        // Throwing is necessary but not sufficient — a null-reference fault is an
+        // accident, and §Error taxonomy asks for a reason.
+        var adapter = new FaultsOnMalformedDataOps(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        var check = report.Failures.Single(f => f.Id == ConformanceIds.PrepareRefusesMalformedDataOp);
+        Assert.Contains("accident", check.Detail);
+    }
+
+    [Fact]
     public async Task Branch_without_a_fidelity_declaration_fails()
     {
         var adapter = new EmptyFidelity(Seeded());
@@ -242,6 +268,32 @@ public class ConformanceTests
         {
             try { return await Inner.ActiveStateAsync(t, ct); }
             catch (InvalidOperationException) { return new ActiveState("invented", new Dictionary<string, string>()); }
+        }
+    }
+
+    private sealed class SwallowsMalformedDataOps(IBackendAdapter inner) : Passthrough(inner)
+    {
+        public override async Task<PrepareReport> PrepareAsync(
+            string branchRef, PreparedFacets facets, CancellationToken ct = default)
+        {
+            try { return await Inner.PrepareAsync(branchRef, facets, ct); }
+            catch (InvalidOperationException)
+            {
+                return new PrepareReport(new Dictionary<string, bool>
+                {
+                    ["schema"] = true, ["ui"] = true, ["data"] = true,
+                });
+            }
+        }
+    }
+
+    private sealed class FaultsOnMalformedDataOps(IBackendAdapter inner) : Passthrough(inner)
+    {
+        public override async Task<PrepareReport> PrepareAsync(
+            string branchRef, PreparedFacets facets, CancellationToken ct = default)
+        {
+            try { return await Inner.PrepareAsync(branchRef, facets, ct); }
+            catch (InvalidOperationException) { throw new NullReferenceException(); }
         }
     }
 

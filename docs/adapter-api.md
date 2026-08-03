@@ -41,6 +41,33 @@ Simulation is *not* an adapter operation: Stage and the host drive whatever
 runs against the branch (e.g. a UI runtime rendering preview artifacts);
 the adapter only guarantees the branch behaves as declared.
 
+### Data operations: the adapter validates its own input
+
+`prepare` receives a document authored elsewhere. An adapter **MUST** check the
+data operations it is handed against the changeset spec's §5.3 shape — the
+operation vocabulary, the members each operation requires, and a predicate of
+the form `{ field, equals }` — and **MUST refuse** a document it cannot execute
+honestly, with a message naming what is wrong and where.
+
+Two failure modes this rules out, both worse than a refusal:
+
+- **Crashing structurally.** Dereferencing an absent member yields a null-reference
+  fault, and a fault is not a reason. §Error taxonomy requires the adapter to say
+  why; an accident says nothing.
+- **Silently doing less.** An unrecognized operation that falls through a dispatch,
+  or a missing predicate treated as "match everything", makes `prepare` report
+  completion for work it did not do — or did far too much of. Both put a false
+  input under the flip.
+
+The upstream validator's strictness is **not** a substitute. It may be older than
+the document, it may be a different implementation, and `prepare` is the door: a
+door that assumes its input was checked elsewhere is not a door. The check is
+cheap, total, and belongs before any staging mutation, so a refusal never leaves a
+half-staged branch.
+
+The exception *type* is the adapter's choice (§Error taxonomy leaves it
+unspecified in v0); the *message* is not optional.
+
 ## 4. Fidelity declaration (minimum schema)
 
 Per branch, machine-readable:
@@ -112,6 +139,15 @@ Design points that landed during implementation:
   pointer's value is the rollback return path and the decider for post-crash
   ledger reconciliation (fault-model F5); per-facet fingerprints serve the
   drift gate. Both are needed, so the operation returns both.
+- **`FacetFingerprints` keys are drift-gate refs, not facet names.** A changeset's
+  `baseState` entries name what the author stood on, and this dictionary must answer
+  with the same granularity. That is one entry for `schema` and one for `data`, but
+  **one entry per UI artifact** — `screen-orders`, not `ui` — because UI drift is
+  per-artifact: editing one screen must not refuse a proposal that touches another.
+  A key vocabulary is therefore not a facet-name vocabulary, and a host asking
+  "did the UI facet move?" reads the artifact entries it cares about rather than
+  looking for a `ui` key. The fidelity declaration (§4) *is* keyed by facet name —
+  the two serve different questions and their key sets are deliberately different.
 - **Refs are opaque strings.** A branch ref doubles as a state ref once
   flipped (a branch *is* the thing that graduates to an apply). The first
   adapter binds them to backend project ids; the in-memory adapter to world keys.

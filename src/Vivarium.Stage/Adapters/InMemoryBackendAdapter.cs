@@ -186,6 +186,15 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
 
     private static void ApplyPatches(JsonObject world, JsonObject patches)
     {
+        // Total check before any mutation: prepare receives a document authored
+        // elsewhere, so its data operations are input to be validated, not facts
+        // to be trusted. Checking op-by-op inside the apply loop would leave the
+        // branch half-staged behind a refusal.
+        var dataPatches = (patches["data"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+        for (var p = 0; p < dataPatches.Length; p++)
+            foreach (var (op, i) in (dataPatches[p]["operations"] as JsonArray ?? []).Select((o, i) => (o, i)))
+                RequireWellFormedDataOp(op, $"patches.data[{p}].operations[{i}]");
+
         foreach (var op in (patches["schema"] as JsonArray ?? []).OfType<JsonObject>())
             ApplySchemaOp((JsonObject)world["schema"]!["entities"]!, op);
         foreach (var patch in (patches["ui"] as JsonArray ?? []).OfType<JsonObject>())
@@ -273,6 +282,41 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         }
     }
 
+    /// <summary>
+    /// Refuse a data operation this adapter cannot execute honestly, naming what is
+    /// wrong and where (adapter-api §Data operations). The changeset spec defines the
+    /// shape; an adapter checks it anyway, because <c>prepare</c> is the door and a
+    /// door that assumes its input has been checked upstream is not a door.
+    /// </summary>
+    private static void RequireWellFormedDataOp(JsonNode? node, string path)
+    {
+        if (node is not JsonObject op)
+            throw new InvalidOperationException($"{path}: data operation must be a JSON object");
+
+        var kind = (op["op"] as JsonValue)?.TryGetValue(out string? k) == true ? k : null;
+        if (kind is not ("insert" or "update" or "delete"))
+            throw new InvalidOperationException(
+                $"{path}.op: unknown data operation '{op["op"]?.ToJsonString() ?? "undefined"}' " +
+                "(expected insert, update, or delete)");
+
+        if ((op["entity"] as JsonValue)?.TryGetValue(out string? entity) != true || string.IsNullOrEmpty(entity))
+            throw new InvalidOperationException($"{path}.entity: required non-empty string");
+
+        if (kind is "insert" && op["values"] is not JsonObject)
+            throw new InvalidOperationException($"{path}.values: insert requires an object of field name to value");
+        if (kind is "update" && op["set"] is not JsonObject)
+            throw new InvalidOperationException($"{path}.set: update requires an object of field name to value");
+
+        if (kind is "insert") return;
+        if (op["where"] is not JsonObject where)
+            throw new InvalidOperationException(
+                $"{path}.where: {kind} requires a predicate object {{ field, equals }}");
+        if ((where["field"] as JsonValue)?.TryGetValue(out string? field) != true || string.IsNullOrEmpty(field))
+            throw new InvalidOperationException($"{path}.where.field: required non-empty string");
+        if (!where.ContainsKey("equals"))
+            throw new InvalidOperationException($"{path}.where.equals: required — a literal to compare against");
+    }
+
     private static void ApplyDataOp(JsonObject data, JsonObject op)
     {
         var entity = op["entity"]!.GetValue<string>();
@@ -291,15 +335,21 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 foreach (var row in Matching(rows, op).ToList())
                     rows.Remove(row);
                 break;
+            default:
+                // unreachable: the op vocabulary is checked before anything is applied.
+                // Present so that widening the vocabulary cannot silently no-op instead.
+                throw new InvalidOperationException($"unhandled data operation: {op["op"]}");
         }
     }
 
     private static IEnumerable<JsonObject> Matching(JsonArray rows, JsonObject op)
     {
-        var where = op["where"] as JsonObject;
+        // No match-all fallback: a predicate that went missing must not quietly select
+        // every row. RequireWellFormedDataOp has already refused that document.
+        var where = op["where"] as JsonObject
+            ?? throw new InvalidOperationException("data operation reached matching without a predicate");
         foreach (var row in rows.OfType<JsonObject>())
         {
-            if (where is null) { yield return row; continue; }
             var field = where["field"]!.GetValue<string>();
             var expected = where["equals"];
             var actual = row[field];

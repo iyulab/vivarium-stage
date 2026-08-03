@@ -29,6 +29,7 @@ public static class ConformanceIds
     public const string PrepareReportsPerFacet = "adapter-api §3/prepare-reports-per-facet";
     public const string PrepareIdempotentPerFingerprint = "adapter-api §3/prepare-idempotent-per-fingerprint";
     public const string PrepareHasNoLiveEffect = "adapter-api §3/prepare-has-no-live-effect";
+    public const string PrepareRefusesMalformedDataOp = "adapter-api §3/prepare-refuses-malformed-data-operation";
     public const string ActiveStateReturnsRefAndFingerprints = "adapter-api §3/active-state-returns-ref-and-fingerprints";
     public const string ActiveStateDeterministic = "adapter-api §3/active-state-deterministic";
     public const string UnknownTargetThrows = "adapter-api §Error-taxonomy/unknown-target-throws";
@@ -288,6 +289,55 @@ public static class AdapterConformance
                 "re-preparing the same fingerprint reported a different completion — retry after a prepare crash (fault-model F2) would not be safe");
         else
             Pass(ConformanceIds.PrepareIdempotentPerFingerprint, prepareIdemTitle);
+
+        // The document handed to prepare is authored elsewhere, so the adapter must
+        // refuse a data operation it cannot execute honestly rather than crash on it
+        // or quietly stage less. The predicate below is malformed under the changeset
+        // spec's §5.3 shape in the most ordinary way — a key/value map where
+        // `{ field, equals }` belongs — which is the shape a producer reaches for first.
+        const string malformedDataTitle = "prepare refuses a malformed data operation";
+        var malformed = new System.Text.Json.Nodes.JsonObject
+        {
+            ["schema"] = new System.Text.Json.Nodes.JsonArray(),
+            ["ui"] = new System.Text.Json.Nodes.JsonArray(),
+            ["data"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+            {
+                ["id"] = "conformance-malformed",
+                ["explanation"] = "conformance probe — must be refused",
+                ["operations"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+                {
+                    ["op"] = "update",
+                    ["entity"] = "conformance-probe-entity",
+                    ["where"] = new System.Text.Json.Nodes.JsonObject { ["someField"] = "someValue" },
+                    ["set"] = new System.Text.Json.Nodes.JsonObject { ["someField"] = "other" },
+                }),
+            }),
+        };
+        try
+        {
+            await adapter.PrepareAsync(
+                branch.BranchRef,
+                new PreparedFacets($"{fingerprint}-malformed", malformed),
+                ct);
+            Fail(ConformanceIds.PrepareRefusesMalformedDataOp, malformedDataTitle,
+                "prepare accepted an operation whose predicate is not { field, equals } — it either staged something it could not have understood or silently staged nothing, and reported completion either way");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e) when (e is not NullReferenceException)
+        {
+            // the exception TYPE is the adapter's choice (§Error taxonomy is
+            // unspecified in v0); refusing at all, with something to read, is not
+            Pass(ConformanceIds.PrepareRefusesMalformedDataOp, malformedDataTitle);
+            if (string.IsNullOrWhiteSpace(e.Message))
+                checks[^1] = new ConformanceCheck(ConformanceIds.PrepareRefusesMalformedDataOp,
+                    malformedDataTitle, ConformanceOutcome.Failed,
+                    "the refusal carried no message — §Error taxonomy requires a reason, and an empty one is not a reason");
+        }
+        catch (NullReferenceException)
+        {
+            Fail(ConformanceIds.PrepareRefusesMalformedDataOp, malformedDataTitle,
+                "prepare dereferenced an absent member instead of refusing — a null-reference fault is an accident, not a reason (§Error taxonomy)");
+        }
 
         const string prepareLiveTitle = "prepare has no live effect";
         var afterPrepare = await adapter.ActiveStateAsync(fixture.KnownTarget, ct);
