@@ -25,10 +25,11 @@ public class RefusalDetailTests
 
         Assert.NotNull(ex.Details);
         Assert.Equal("base-state", Str(ex.Details, "scope"));
-        Assert.Equal("ui-artifact", Str(ex.Details, "kind"));
-        Assert.Equal("screen-loans", Str(ex.Details, "ref"));
-        var expected = Str(ex.Details, "expected");
-        var actual = Str(ex.Details, "actual");
+        var entry = Drifted(ex, 0);
+        Assert.Equal("ui-artifact", Str(entry, "kind"));
+        Assert.Equal("screen-loans", Str(entry, "ref"));
+        var expected = Str(entry, "expected");
+        var actual = Str(entry, "actual");
         Assert.NotNull(expected);
         Assert.NotNull(actual);
         Assert.NotEqual(expected, actual);
@@ -43,16 +44,38 @@ public class RefusalDetailTests
     {
         var world = new TestWorld();
         var session = await world.SimulatedSessionAsync(
-            await ChangesetWithBaseRefAsync(world, "no-such-ref"));
+            await ChangesetWithBaseRefsAsync(world, ("schema", "no-such-ref")));
 
         var ex = await Assert.ThrowsAsync<StageRefusedException>(() => session.ApplyAsync("operator-1"));
 
         Assert.Equal(RefusalReason.DriftGate, ex.Reason);
-        Assert.Equal("no-such-ref", Str(ex.Details, "ref"));
+        var entry = Drifted(ex, 0);
+        Assert.Equal("no-such-ref", Str(entry, "ref"));
         // absent, not merely different — a host offering "re-base" must tell these apart
-        Assert.Null(ex.Details!["actual"]);
-        Assert.NotNull(ex.Details["knownRefs"] as JsonArray);
-        Assert.NotEmpty((JsonArray)ex.Details["knownRefs"]!);
+        Assert.Null(entry["actual"]);
+        Assert.NotEmpty((JsonArray)ex.Details!["knownRefs"]!);
+    }
+
+    /// <summary>
+    /// Re-basing is the author's job, and refusing one drifted ref at a time would
+    /// make learning the full picture N round trips through the whole gate.
+    /// </summary>
+    [Fact]
+    public async Task EveryDriftedRefIsReportedInOneRefusal()
+    {
+        var world = new TestWorld();
+        var session = await world.SimulatedSessionAsync(await ChangesetWithBaseRefsAsync(
+            world, ("schema", "no-such-ref"), ("ui-artifact", "also-missing")));
+
+        var ex = await Assert.ThrowsAsync<StageRefusedException>(() => session.ApplyAsync("operator-1"));
+
+        var entries = (JsonArray)ex.Details!["drifted"]!;
+        Assert.Equal(2, entries.Count);
+        Assert.Contains(entries, e => Str((JsonObject)e!, "ref") == "no-such-ref");
+        Assert.Contains(entries, e => Str((JsonObject)e!, "ref") == "also-missing");
+        // the sentence stays a complete account too, not a sample of one
+        Assert.Contains("no-such-ref", ex.Message);
+        Assert.Contains("also-missing", ex.Message);
     }
 
     [Fact]
@@ -127,18 +150,23 @@ public class RefusalDetailTests
         await Task.CompletedTask;
     }
 
-    private static async Task<JsonObject> ChangesetWithBaseRefAsync(TestWorld world, string baseRef)
+    private static JsonObject Drifted(StageRefusedException ex, int index) =>
+        (JsonObject)((JsonArray)ex.Details!["drifted"]!)[index]!;
+
+    private static async Task<JsonObject> ChangesetWithBaseRefsAsync(
+        TestWorld world, params (string Kind, string Ref)[] refs)
     {
         var doc = await world.ApprovedChangesetAsync(approved: false);
         var rewritten = (JsonObject)doc.DeepClone();
         rewritten.Remove("fingerprint");
         rewritten.Remove("approvals");
-        ((JsonObject)rewritten["provenance"]!)["baseState"] = new JsonArray(new JsonObject
-        {
-            ["kind"] = "schema",
-            ["ref"] = baseRef,
-            ["fingerprint"] = "sha256:" + new string('a', 64),
-        });
+        ((JsonObject)rewritten["provenance"]!)["baseState"] = new JsonArray(refs
+            .Select(r => (JsonNode)new JsonObject
+            {
+                ["kind"] = r.Kind,
+                ["ref"] = r.Ref,
+                ["fingerprint"] = "sha256:" + new string('a', 64),
+            }).ToArray());
         var restamped = Vivarium.Changeset.ChangesetFingerprint.Stamp(rewritten);
         restamped["approvals"] = new JsonArray(new JsonObject
         {

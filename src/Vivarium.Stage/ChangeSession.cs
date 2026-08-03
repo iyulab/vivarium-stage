@@ -55,6 +55,46 @@ public sealed class StageRefusedException : Exception
     public JsonObject? Details { get; }
 }
 
+/// <summary>
+/// What a completed flip did — the facts the operation established, returned rather
+/// than left for the caller to reconstruct.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is a record of the <em>past</em>, not a claim about the present. "What did my
+/// apply land?" and "what is active now?" are different questions, and they diverge
+/// the moment a concurrent flip lands between them — a caller that answers the first
+/// by asking the second reports someone else's state as its own. Ask the adapter when
+/// you need to know what is live; the verified-never-asserted discipline
+/// (<see cref="ChangeSession.RehydrateAppliedAsync"/>) is untouched by this type,
+/// because a past fact does not become false with time.
+/// </para>
+/// <para>
+/// Properties are init-only rather than positional: this type is expected to grow as
+/// the ledger's facts become useful to callers, and positional records break
+/// deconstruction on every addition.
+/// </para>
+/// </remarks>
+public sealed record FlipOutcome
+{
+    /// <summary><c>apply</c> | <c>rollback</c> — the same axis <c>RecoveryOutcome</c> reports.</summary>
+    public required string Operation { get; init; }
+
+    public required string Target { get; init; }
+
+    /// <summary>The changeset this flip carried — the one sealed and approved, not "the latest".</summary>
+    public required string ChangesetFingerprint { get; init; }
+
+    /// <summary>The token this flip ran under. Re-issuing it is the idempotent recovery no-op (fault-model F4/F6).</summary>
+    public required string ApplyToken { get; init; }
+
+    /// <summary>What was active before. For an apply this is the return path; for a rollback it is what was undone.</summary>
+    public required string PreviousStateRef { get; init; }
+
+    /// <summary>What this flip activated.</summary>
+    public required string NewStateRef { get; init; }
+}
+
 /// <summary>Host policy knobs. Defaults are the safe ones.</summary>
 public sealed record StagePolicy
 {
@@ -210,8 +250,13 @@ public sealed class ChangeSession
     /// ledger → atomic flip → completion ledger (fault-model §1, §3).
     /// Retryable after transient failure: prepare is idempotent per fingerprint
     /// and flip is idempotent under the apply token.
+    ///
+    /// <para>Returns what this apply landed (<see cref="FlipOutcome"/>) — the same
+    /// facts it writes to the ledger. Reading them back with
+    /// <c>ActiveStateAsync</c> instead answers a different question and races a
+    /// concurrent flip.</para>
     /// </summary>
-    public async Task ApplyAsync(string actor, string? applyToken = null, CancellationToken ct = default)
+    public async Task<FlipOutcome> ApplyAsync(string actor, string? applyToken = null, CancellationToken ct = default)
     {
         RequireState(SessionState.Simulated, "apply");
         var branch = _branch!;
@@ -236,42 +281,48 @@ public sealed class ChangeSession
 
         // Gate 3 — drift refusal (fixed principle 3): every state-kind base
         // entry must match the live target exactly; unknown refs refuse too.
+        // Every entry is checked before refusing: re-basing is the author's job,
+        // and sending them back one drifted ref at a time makes it N round trips
+        // to learn what one refusal already knew.
         var active = await _adapter.ActiveStateAsync(Target, ct).ConfigureAwait(false);
         var baseState = (JsonArray)_changeset["provenance"]!["baseState"]!;
+        var drifted = new JsonArray();
+        var driftSummaries = new List<string>();
         foreach (var node in baseState)
         {
             // entry shape and kind vocabulary are spec-validated at admission
-            // (spec 0.2 §4 — the ctor's Validate refuses malformed entries)
+            // (spec §4 — the ctor's Validate refuses malformed entries)
             var entry = (JsonObject)node!;
             var kind = entry["kind"]!.GetValue<string>();
             if (kind == "changeset") continue; // authoring lineage, not live state
             var reference = entry["ref"]!.GetValue<string>();
             var expected = entry["fingerprint"]!.GetValue<string>();
-            if (!active.FacetFingerprints.TryGetValue(reference, out var actual))
-                throw new StageRefusedException(RefusalReason.DriftGate,
-                    $"base state ref '{reference}' is not present in the live target — refusing, not guessing",
-                    new JsonObject
-                    {
-                        ["scope"] = "base-state",
-                        ["kind"] = kind,
-                        ["ref"] = reference,
-                        ["expected"] = expected,
-                        ["actual"] = null, // absent, not merely different — the distinction the message makes
-                        ["knownRefs"] = new JsonArray(active.FacetFingerprints.Keys
-                            .OrderBy(k => k, StringComparer.Ordinal).Select(k => (JsonNode)k!).ToArray()),
-                    });
-            if (actual != expected)
-                throw new StageRefusedException(RefusalReason.DriftGate,
-                    $"live state of '{reference}' has drifted from the changeset's base ({actual} != {expected}); re-basing is the author's job",
-                    new JsonObject
-                    {
-                        ["scope"] = "base-state",
-                        ["kind"] = kind,
-                        ["ref"] = reference,
-                        ["expected"] = expected,
-                        ["actual"] = actual,
-                    });
+            var present = active.FacetFingerprints.TryGetValue(reference, out var actual);
+            if (present && actual == expected) continue;
+            drifted.Add(new JsonObject
+            {
+                ["kind"] = kind,
+                ["ref"] = reference,
+                ["expected"] = expected,
+                // absent is not merely different: an author re-bases a changed ref,
+                // but a missing one means the proposal is aimed at something else
+                ["actual"] = present ? actual : null,
+            });
+            driftSummaries.Add(present
+                ? $"'{reference}' has drifted ({actual} != {expected})"
+                : $"'{reference}' is not present in the live target");
         }
+        if (drifted.Count > 0)
+            throw new StageRefusedException(RefusalReason.DriftGate,
+                $"the changeset's base state does not match the live target — {string.Join("; ", driftSummaries)}; "
+                + "re-basing is the author's job",
+                new JsonObject
+                {
+                    ["scope"] = "base-state",
+                    ["drifted"] = drifted,
+                    ["knownRefs"] = new JsonArray(active.FacetFingerprints.Keys
+                        .OrderBy(k => k, StringComparer.Ordinal).Select(k => (JsonNode)k!).ToArray()),
+                });
 
         // Prepare-all: every facet staged and confirmed before any flip
         // (fixed principle 1). No live effect; failure here is F2 territory.
@@ -304,13 +355,26 @@ public sealed class ChangeSession
             _clock.GetUtcNow().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'"), newStateRef: branch.BranchRef, ct: ct)
             .ConfigureAwait(false);
         State = SessionState.Applied;
+
+        return new FlipOutcome
+        {
+            Operation = "apply",
+            Target = Target,
+            ChangesetFingerprint = Fingerprint,
+            ApplyToken = token,
+            PreviousStateRef = previousStateRef,
+            NewStateRef = branch.BranchRef,
+        };
     }
 
     /// <summary>
     /// applied → rolled back: a re-flip to the pre-apply state through the same
     /// primitive (fixed principle 4 — every apply has a return path).
+    ///
+    /// <para>Returns what this rollback landed (<see cref="FlipOutcome"/>), with the
+    /// refs read from the apply it undoes rather than from the live pointer.</para>
     /// </summary>
-    public async Task RollbackAsync(string actor, string? applyToken = null, CancellationToken ct = default)
+    public async Task<FlipOutcome> RollbackAsync(string actor, string? applyToken = null, CancellationToken ct = default)
     {
         RequireState(SessionState.Applied, "rollback");
         var entries = await _ledger.ReadAllAsync(ct).ConfigureAwait(false);
@@ -321,6 +385,10 @@ public sealed class ChangeSession
         if (myApply.PreviousStateRef is null)
             throw new StageRefusedException(RefusalReason.InvalidStateTransition,
                 "apply recorded no previous state ref — this apply declared no return path");
+        if (myApply.NewStateRef is null)
+            throw new StageRefusedException(RefusalReason.InvalidStateTransition,
+                "apply recorded no new state ref — the entry cannot say what this rollback would undo",
+                new JsonObject { ["applyToken"] = myApply.ApplyToken });
 
         var token = applyToken ?? Guid.NewGuid().ToString("n");
         var now = _clock.GetUtcNow().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
@@ -334,6 +402,19 @@ public sealed class ChangeSession
             _clock.GetUtcNow().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'"), newStateRef: myApply.PreviousStateRef, ct: ct)
             .ConfigureAwait(false);
         State = SessionState.RolledBack;
+
+        return new FlipOutcome
+        {
+            Operation = "rollback",
+            Target = Target,
+            ChangesetFingerprint = Fingerprint,
+            ApplyToken = token,
+            // the apply's new ref is what a rollback leaves behind, and its previous
+            // ref is where the target returns to — the axis is the operation's, not
+            // the ledger entry's
+            PreviousStateRef = myApply.NewStateRef,
+            NewStateRef = myApply.PreviousStateRef,
+        };
     }
 
     /// <summary>Any pre-apply state → discarded. Staging never touches live state, so this is always safe.</summary>

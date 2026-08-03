@@ -103,11 +103,17 @@ if (branch.Fidelity.PerFacet.Count == 0) throw new Exception("branches declare t
 // branch's fidelity declaration is the interpretation rule for the evidence.
 session.RecordSimulation(new JsonObject { ["observed"] = "Orders renders on the branch preview" });
 
-await session.ApplyAsync(actor: "getting-started-operator");
+var landed = await session.ApplyAsync(actor: "getting-started-operator");
 
 if (session.State != SessionState.Applied) throw new Exception("apply lands atomically");
 if (!adapter.ActiveWorldCanonical("app").Contains("Orders"))
     throw new Exception("the live target shows the change");
+
+// The apply reports what it did — the same facts it wrote to the ledger.
+// Ask the adapter what is *live*; ask the outcome what *this apply* landed.
+// The two answer different questions and diverge under a concurrent flip.
+if (landed.Operation != "apply" || landed.PreviousStateRef == landed.NewStateRef)
+    throw new Exception("the outcome names the flip's two ends");
 ```
 
 `ApplyAsync` is where the three gates run, every time:
@@ -191,12 +197,17 @@ try
 }
 catch (StageRefusedException refusal) when (refusal.Reason == RefusalReason.DriftGate)
 {
-    // which facet, what the changeset stood on, what is live now — as values
-    var which = refusal.Details?["ref"]?.GetValue<string>();
-    var expected = refusal.Details?["expected"]?.GetValue<string>();
-    var actual = refusal.Details?["actual"]?.GetValue<string>();
-    if (which != "screen-main" || expected is null) throw new Exception("expected drift details");
-    Console.WriteLine($"re-base '{which}': authored against {expected}, live is {actual ?? "absent"}");
+    // every drifted ref, not just the first: re-basing is the author's job, and
+    // one ref per refusal would make learning the full picture N round trips
+    var driftedRefs = (JsonArray)refusal.Details!["drifted"]!;
+    if (driftedRefs.Count == 0) throw new Exception("expected drift details");
+    foreach (var entry in driftedRefs.OfType<JsonObject>())
+    {
+        var which = entry["ref"]!.GetValue<string>();
+        var expected = entry["expected"]!.GetValue<string>();
+        var actual = entry["actual"]?.GetValue<string>();  // null means the ref is absent
+        Console.WriteLine($"re-base '{which}': authored against {expected}, live is {actual ?? "absent"}");
+    }
 }
 await drifting.DiscardAsync();
 ```
@@ -234,11 +245,16 @@ Rollback is not an afterthought — the apply recorded its return path in the
 ledger, and the rollback flips back to it atomically:
 
 ```csharp
-await session.RollbackAsync(actor: "getting-started-operator");
+var returned = await session.RollbackAsync(actor: "getting-started-operator");
 
 if (session.State != SessionState.RolledBack) throw new Exception("rollback is a first-class path");
 if (!adapter.ActiveWorldCanonical("app").Contains("Home"))
     throw new Exception("rollback returns the previous state");
+
+// The rollback's ends are the apply's, reversed — read from the ledger entry it
+// undoes, not from whatever happens to be live at the time.
+if (returned.NewStateRef != landed.PreviousStateRef)
+    throw new Exception("a rollback returns to where the apply came from");
 ```
 
 The ledger is append-only and write-ahead (started/completed pairs), which
