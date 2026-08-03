@@ -89,10 +89,19 @@ public sealed record ConformanceReport(IReadOnlyList<ConformanceCheck> Checks)
 /// in a real apply". An empty or unrecognised patch set makes the prepare
 /// checks report on the fixture rather than on the adapter.
 /// </param>
+/// <param name="TokenPrefix">
+/// Prefix for the flip tokens this run issues. Tokens are unique per run so a
+/// re-run is not mistaken for an idempotent replay; the prefix is what makes
+/// them traceable. Supply a build id (or any stable, unique-per-run value) when
+/// running in CI against an adapter that persists tokens — a real backend keeps
+/// a flip log keyed by token, and rows nobody can correlate to a run are
+/// indistinguishable from litter.
+/// </param>
 public sealed record ConformanceFixture(
     string KnownTarget,
     string UnknownTarget,
-    System.Text.Json.Nodes.JsonObject Patches);
+    System.Text.Json.Nodes.JsonObject Patches,
+    string TokenPrefix = "conformance");
 
 /// <summary>
 /// Executable conformance suite for <see cref="IBackendAdapter"/>
@@ -289,7 +298,7 @@ public static class AdapterConformance
             Pass(ConformanceIds.PrepareHasNoLiveEffect, prepareLiveTitle);
 
         // ---- §3 flip ----
-        var token = "conformance-" + Guid.NewGuid().ToString("n");
+        var token = $"{fixture.TokenPrefix}-flip-{Guid.NewGuid():n}";
         const string flipTitle = "flip activates the requested state ref";
         var flipped = false;
         try
@@ -383,7 +392,7 @@ public static class AdapterConformance
             }
             else
             {
-                await adapter.FlipAsync(fixture.KnownTarget, original.StateRef, "conformance-restore-" + Guid.NewGuid().ToString("n"), ct);
+                await adapter.FlipAsync(fixture.KnownTarget, original.StateRef, $"{fixture.TokenPrefix}-restore-{Guid.NewGuid():n}", ct);
                 var restored = await adapter.ActiveStateAsync(fixture.KnownTarget, ct);
                 if (!SameState(original, restored))
                     Fail(ConformanceIds.FlipRestoresPreviousState, restoreTitle,

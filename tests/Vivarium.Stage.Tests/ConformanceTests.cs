@@ -210,6 +210,10 @@ public class ConformanceTests
 
         Assert.DoesNotContain(report.Failures, f => f.Id == ConformanceIds.UnknownTargetThrows);
         Assert.DoesNotContain(report.Failures, f => f.Id == ConformanceIds.TokenReuseDifferentStateThrows);
+        // Asserting the whole run passes is what catches a decorator whose own
+        // token guard swallows the restore flip — absence from Failures on two
+        // ids would not notice the fixture failing to come home.
+        Assert.True(report.AllPassed, report.ToString());
     }
 
     private static void AssertFailedOnly(ConformanceReport report, string expectedId)

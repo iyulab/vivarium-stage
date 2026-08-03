@@ -61,6 +61,14 @@ recorded in the ledger with the apply (branching decision; fault-model §3).
   the first subset-producing adapter, demand-driven.
 - Whether `prepare` exposes progress for large facets — not needed at current
   facet sizes; revisit with the first large-data adapter.
+- **`discard` on a branch that has been flipped.** §3 calls discard "always
+  safe", which reads as unconditional, but a flipped branch is no longer a
+  staging world — it is the live state, and the reference adapter refuses to
+  discard it. Refusing is the right behaviour; the text just does not say so.
+  Surfaced by writing the conformance suite (§7), which initially checked
+  discard on the flipped branch and so failed a correct adapter. The suite now
+  discards a branch that was never flipped. Wording to be settled with the next
+  adapter that has an opinion — until then, adapters may refuse.
 
 ## 6. Signatures (finalized with the first adapter — .NET reference)
 
