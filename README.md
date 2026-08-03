@@ -89,6 +89,13 @@ Preview and release are one repository because they are one state machine: a bra
 
 ## Relationship to the Vivarium family
 
+A running instance of the family — propose, preview, approve, apply, roll back — is
+browsable as a gallery of archived runs: [vivarium-gallery](https://github.com/iyulab/vivarium-gallery)
+([live](https://iyulab.github.io/vivarium-gallery/)). Each exhibit keeps the final artifacts, the
+turn ledger and the rollback record of an actual run, so the claims above can be checked
+rather than taken on faith.
+
+
 Depends on [`vivarium-changeset`](https://github.com/iyulab/vivarium-changeset) only. It does not know how changesets are authored and does not depend on `vivarium` or `vivarium-agent`. It is the family's sole holder of write authority over live systems — a deliberate concentration: one place to audit, one place to harden.
 
 Standalone use is a first-class scenario: any platform that needs *"preview, atomically apply, and roll back structured changes to a running system"* can adopt Stage with its own adapter, with or without the rest of the family.
