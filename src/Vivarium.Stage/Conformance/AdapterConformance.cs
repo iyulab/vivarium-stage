@@ -30,6 +30,7 @@ public static class ConformanceIds
     public const string PrepareIdempotentPerFingerprint = "adapter-api §3/prepare-idempotent-per-fingerprint";
     public const string PrepareHasNoLiveEffect = "adapter-api §3/prepare-has-no-live-effect";
     public const string PrepareRefusesMalformedDataOp = "adapter-api §3/prepare-refuses-malformed-data-operation";
+    public const string PrepareRefusesMalformedSchemaOp = "adapter-api §3/prepare-refuses-malformed-schema-operation";
     public const string ActiveStateReturnsRefAndFingerprints = "adapter-api §3/active-state-returns-ref-and-fingerprints";
     public const string ActiveStateDeterministic = "adapter-api §3/active-state-deterministic";
     public const string UnknownTargetThrows = "adapter-api §Error-taxonomy/unknown-target-throws";
@@ -337,6 +338,45 @@ public static class AdapterConformance
         {
             Fail(ConformanceIds.PrepareRefusesMalformedDataOp, malformedDataTitle,
                 "prepare dereferenced an absent member instead of refusing — a null-reference fault is an accident, not a reason (§Error taxonomy)");
+        }
+
+        // The clause covers every facet, so the check does too. A schema operation
+        // outside the vocabulary is the shape that used to stage nothing while
+        // prepare reported the facet complete — completion for work not done.
+        const string malformedSchemaTitle = "prepare refuses a malformed schema operation";
+        var malformedSchema = new System.Text.Json.Nodes.JsonObject
+        {
+            ["schema"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+            {
+                ["op"] = "entity.truncate",
+                ["entity"] = "conformance-probe-entity",
+                ["explanation"] = "conformance probe — must be refused",
+            }),
+            ["ui"] = new System.Text.Json.Nodes.JsonArray(),
+            ["data"] = new System.Text.Json.Nodes.JsonArray(),
+        };
+        try
+        {
+            await adapter.PrepareAsync(
+                branch.BranchRef,
+                new PreparedFacets($"{fingerprint}-malformed-schema", malformedSchema),
+                ct);
+            Fail(ConformanceIds.PrepareRefusesMalformedSchemaOp, malformedSchemaTitle,
+                "prepare accepted a schema operation outside the vocabulary — it staged nothing for that facet and reported it complete anyway");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (NullReferenceException)
+        {
+            Fail(ConformanceIds.PrepareRefusesMalformedSchemaOp, malformedSchemaTitle,
+                "prepare dereferenced an absent member instead of refusing — a null-reference fault is an accident, not a reason (§Error taxonomy)");
+        }
+        catch (Exception e)
+        {
+            if (string.IsNullOrWhiteSpace(e.Message))
+                Fail(ConformanceIds.PrepareRefusesMalformedSchemaOp, malformedSchemaTitle,
+                    "the refusal carried no message — §Error taxonomy requires a reason, and an empty one is not a reason");
+            else
+                Pass(ConformanceIds.PrepareRefusesMalformedSchemaOp, malformedSchemaTitle);
         }
 
         const string prepareLiveTitle = "prepare has no live effect";

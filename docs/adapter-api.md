@@ -41,13 +41,14 @@ Simulation is *not* an adapter operation: Stage and the host drive whatever
 runs against the branch (e.g. a UI runtime rendering preview artifacts);
 the adapter only guarantees the branch behaves as declared.
 
-### Data operations: the adapter validates its own input
+### Operation input: the adapter validates what it is handed
 
 `prepare` receives a document authored elsewhere. An adapter **MUST** check the
-data operations it is handed against the changeset spec's §5.3 shape — the
-operation vocabulary, the members each operation requires, and a predicate of
-the form `{ field, equals }` — and **MUST refuse** a document it cannot execute
-honestly, with a message naming what is wrong and where.
+operations in **every facet** against the changeset spec's shape — the operation
+vocabularies (§5.1 schema, §5.3 data), the members each operation requires, the
+UI patch profiles (§5.2), and the closed data predicate `{ field, equals }` — and
+**MUST refuse** a document it cannot execute honestly, with a message naming what
+is wrong and where.
 
 Two failure modes this rules out, both worse than a refusal:
 
@@ -59,11 +60,18 @@ Two failure modes this rules out, both worse than a refusal:
   completion for work it did not do — or did far too much of. Both put a false
   input under the flip.
 
-The upstream validator's strictness is **not** a substitute. It may be older than
-the document, it may be a different implementation, and `prepare` is the door: a
-door that assumes its input was checked elsewhere is not a door. The check is
-cheap, total, and belongs before any staging mutation, so a refusal never leaves a
-half-staged branch.
+The upstream validator's strictness is **not** a substitute, and this holds even
+for the facets it does constrain. It may be older than the document, it may be a
+different implementation, and **`prepare` is public API** — a host can call it
+without ever building a `ChangeSession`, so "the validator checked it" is not a
+property this operation gets to assume. `prepare` is the door: a door that assumes
+its input was checked elsewhere is not a door. The check is cheap, total, and
+belongs before any staging mutation, so a refusal never leaves a half-staged branch.
+
+The same rule covers the case where an operation is well-formed but names something
+absent — renaming a field the entity does not have. Inventing it (writing an empty
+declaration under the new name) produces state no later read can tell from a real
+field. Refuse instead: the operation says what it expected to find.
 
 The exception *type* is the adapter's choice (§Error taxonomy leaves it
 unspecified in v0); the *message* is not optional.

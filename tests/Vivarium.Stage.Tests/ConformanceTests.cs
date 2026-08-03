@@ -95,11 +95,24 @@ public class ConformanceTests
         // Silently staging less is the failure the check is really after: the
         // adapter reports completion for work it did not do, and a false input
         // goes under the flip.
-        var adapter = new SwallowsMalformedDataOps(Seeded());
+        var adapter = new SwallowsMalformedOps(Seeded());
 
         var report = await AdapterConformance.RunAsync(adapter, Fixture());
 
         Assert.Contains(report.Failures, f => f.Id == ConformanceIds.PrepareRefusesMalformedDataOp);
+    }
+
+    [Fact]
+    public async Task Accepting_a_malformed_schema_operation_fails()
+    {
+        // The clause covers every facet; so must the kit. An operation outside the
+        // vocabulary that stages nothing while prepare reports completion is the
+        // same silence, one facet over.
+        var adapter = new SwallowsMalformedOps(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        Assert.Contains(report.Failures, f => f.Id == ConformanceIds.PrepareRefusesMalformedSchemaOp);
     }
 
     [Fact]
@@ -271,7 +284,7 @@ public class ConformanceTests
         }
     }
 
-    private sealed class SwallowsMalformedDataOps(IBackendAdapter inner) : Passthrough(inner)
+    private sealed class SwallowsMalformedOps(IBackendAdapter inner) : Passthrough(inner)
     {
         public override async Task<PrepareReport> PrepareAsync(
             string branchRef, PreparedFacets facets, CancellationToken ct = default)

@@ -187,9 +187,18 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
     private static void ApplyPatches(JsonObject world, JsonObject patches)
     {
         // Total check before any mutation: prepare receives a document authored
-        // elsewhere, so its data operations are input to be validated, not facts
-        // to be trusted. Checking op-by-op inside the apply loop would leave the
-        // branch half-staged behind a refusal.
+        // elsewhere, so its operations are input to be validated, not facts to be
+        // trusted. Checking op-by-op inside an apply loop would leave the branch
+        // half-staged behind a refusal.
+        //
+        // All three facets, not just data. The changeset validator does constrain
+        // schema and UI patches — but PrepareAsync is public API that a host can
+        // call without ever building a ChangeSession, so "the validator checked it"
+        // is not a property this method can rely on.
+        foreach (var (op, i) in (patches["schema"] as JsonArray ?? []).Select((o, i) => (o, i)))
+            RequireWellFormedSchemaOp(op, $"patches.schema[{i}]");
+        foreach (var (patch, i) in (patches["ui"] as JsonArray ?? []).Select((o, i) => (o, i)))
+            RequireWellFormedUiPatch(patch, $"patches.ui[{i}]");
         var dataPatches = (patches["data"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
         for (var p = 0; p < dataPatches.Length; p++)
             foreach (var (op, i) in (dataPatches[p]["operations"] as JsonArray ?? []).Select((o, i) => (o, i)))
@@ -258,13 +267,21 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             case "field.rename":
                 var fieldsObj = (JsonObject)EntityObj()["fields"]!;
                 var oldName = op["field"]!.GetValue<string>();
-                var moved = fieldsObj[oldName]?.DeepClone();
+                // renaming a field that is not there wrote a null under the new name —
+                // a declared-but-empty field that no later read distinguishes from a
+                // real one. Refuse instead: the entity is known, the field is not.
+                var moved = fieldsObj[oldName]?.DeepClone()
+                    ?? throw new InvalidOperationException(
+                        $"cannot rename '{oldName}' on entity '{entity}': no such field");
                 fieldsObj.Remove(oldName);
                 fieldsObj[op["newName"]!.GetValue<string>()] = moved;
                 break;
             case "field.retype":
-                ((JsonObject)((JsonObject)EntityObj()["fields"]!)[op["field"]!.GetValue<string>()]!)["type"] =
-                    op["newType"]!.GetValue<string>();
+                var retypeName = op["field"]!.GetValue<string>();
+                var target = ((JsonObject)EntityObj()["fields"]!)[retypeName] as JsonObject
+                    ?? throw new InvalidOperationException(
+                        $"cannot retype '{retypeName}' on entity '{entity}': no such field");
+                target["type"] = op["newType"]!.GetValue<string>();
                 break;
             case "field.remove":
                 ((JsonObject)EntityObj()["fields"]!).Remove(op["field"]!.GetValue<string>());
@@ -279,15 +296,106 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                     if (JsonCanonicalizer.Canonicalize(constraints[i]!.ToJsonString()) == toRemove)
                         constraints.RemoveAt(i);
                 break;
+            default:
+                // unreachable: the vocabulary is checked before anything is applied.
+                // Present so that widening it cannot silently no-op while prepare
+                // still reports the schema facet complete.
+                throw new InvalidOperationException($"unhandled schema operation: {op["op"]}");
         }
     }
 
     /// <summary>
     /// Refuse a data operation this adapter cannot execute honestly, naming what is
-    /// wrong and where (adapter-api §Data operations). The changeset spec defines the
+    /// wrong and where (adapter-api §Operation input). The changeset spec defines the
     /// shape; an adapter checks it anyway, because <c>prepare</c> is the door and a
     /// door that assumes its input has been checked upstream is not a door.
     /// </summary>
+    /// <summary>Per-operation members the schema vocabulary defines (changeset spec §5.1).</summary>
+    private static readonly Dictionary<string, string[]> SchemaOpMembers = new()
+    {
+        ["entity.create"] = ["entity", "fields"],
+        ["entity.rename"] = ["entity", "newName"],
+        ["entity.remove"] = ["entity"],
+        ["field.add"] = ["entity", "field"],
+        ["field.rename"] = ["entity", "field", "newName"],
+        ["field.retype"] = ["entity", "field", "newType"],
+        ["field.remove"] = ["entity", "field"],
+        ["constraint.add"] = ["entity", "constraint"],
+        ["constraint.remove"] = ["entity", "constraint"],
+    };
+
+    /// <summary>Refuse a schema operation this adapter cannot execute honestly (adapter-api §Operation input).</summary>
+    private static void RequireWellFormedSchemaOp(JsonNode? node, string path)
+    {
+        if (node is not JsonObject op)
+            throw new InvalidOperationException($"{path}: schema operation must be a JSON object");
+
+        var kind = (op["op"] as JsonValue)?.TryGetValue(out string? k) == true ? k : null;
+        if (kind is null || !SchemaOpMembers.TryGetValue(kind, out var required))
+            throw new InvalidOperationException(
+                $"{path}.op: unknown schema operation '{op["op"]?.ToJsonString() ?? "undefined"}' " +
+                $"(expected one of: {string.Join(", ", SchemaOpMembers.Keys)})");
+
+        foreach (var member in required)
+            if (!op.ContainsKey(member))
+                throw new InvalidOperationException($"{path}.{member}: required by {kind}");
+
+        if ((op["entity"] as JsonValue)?.TryGetValue(out string? entity) != true || string.IsNullOrEmpty(entity))
+            throw new InvalidOperationException($"{path}.entity: required non-empty string");
+
+        // `field` is an object for field.add (the declaration) and a name for the
+        // operations that address an existing one — the vocabulary's one asymmetry,
+        // and the reason a single "is it a string" check would be wrong here.
+        if (kind == "field.add")
+        {
+            if (op["field"] is not JsonObject declaration)
+                throw new InvalidOperationException($"{path}.field: field.add declares a field, so this must be an object");
+            if ((declaration["name"] as JsonValue)?.TryGetValue(out string? fieldName) != true || string.IsNullOrEmpty(fieldName))
+                throw new InvalidOperationException($"{path}.field.name: required non-empty string");
+        }
+        else if (required.Contains("field")
+            && ((op["field"] as JsonValue)?.TryGetValue(out string? named) != true || string.IsNullOrEmpty(named)))
+        {
+            throw new InvalidOperationException($"{path}.field: required non-empty field name");
+        }
+
+        foreach (var member in new[] { "newName", "newType" })
+            if (required.Contains(member)
+                && ((op[member] as JsonValue)?.TryGetValue(out string? value) != true || string.IsNullOrEmpty(value)))
+                throw new InvalidOperationException($"{path}.{member}: required non-empty string");
+
+        if (kind == "entity.create" && op["fields"] is not JsonArray)
+            throw new InvalidOperationException($"{path}.fields: entity.create requires an array of field declarations");
+        if (kind == "entity.create")
+            foreach (var (f, i) in ((JsonArray)op["fields"]!).Select((f, i) => (f, i)))
+                if ((f as JsonObject)?["name"] is not JsonValue name
+                    || !name.TryGetValue(out string? n) || string.IsNullOrEmpty(n))
+                    throw new InvalidOperationException($"{path}.fields[{i}].name: required non-empty string");
+    }
+
+    /// <summary>Refuse a UI patch this adapter cannot execute honestly (adapter-api §Operation input).</summary>
+    private static void RequireWellFormedUiPatch(JsonNode? node, string path)
+    {
+        if (node is not JsonObject patch)
+            throw new InvalidOperationException($"{path}: UI patch must be a JSON object");
+
+        if ((patch["artifactId"] as JsonValue)?.TryGetValue(out string? artifactId) != true || string.IsNullOrEmpty(artifactId))
+            throw new InvalidOperationException($"{path}.artifactId: required non-empty string");
+
+        var profile = (patch["profile"] as JsonValue)?.TryGetValue(out string? p) == true ? p : null;
+        if (profile is not ("whole-artifact@0" or "verified-diff@0"))
+            throw new InvalidOperationException(
+                $"{path}.profile: unknown UI patch profile '{patch["profile"]?.ToJsonString() ?? "undefined"}' " +
+                "(expected whole-artifact@0 or verified-diff@0)");
+
+        // verified-diff@0's own inputs are already verified where they are resolved
+        // against the branch's base (layer 2, §5.2.2) — checking them twice would
+        // duplicate a check that has to live there anyway.
+        if (profile == "whole-artifact@0"
+            && ((patch["newContent"] as JsonValue)?.TryGetValue(out string? _) != true))
+            throw new InvalidOperationException($"{path}.newContent: whole-artifact@0 carries the full content, so this is required");
+    }
+
     private static void RequireWellFormedDataOp(JsonNode? node, string path)
     {
         if (node is not JsonObject op)
