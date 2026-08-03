@@ -160,9 +160,51 @@ await rogue.DiscardAsync(); // pre-apply exits never touch live state
 ```
 
 Every refusal carries a `RefusalReason` (`InvalidChangeset`,
-`FingerprintGate`, `DriftGate`, `DegradedAdapter`,
-`InvalidStateTransition`), so hosts can present *why* without parsing
-messages.
+`FingerprintGate`, `DriftGate`, `DegradedAdapter`, `PrepareIncomplete`,
+`InvalidStateTransition`) — that is *which gate*. Where the gate observed
+something a caller can act on, `Details` carries it as data, so presenting
+*what* does not mean parsing the sentence either:
+
+```csharp
+var stale = ChangesetFingerprint.Stamp(unapproved); // never mind the approval here
+((JsonObject)stale["provenance"]!)["baseState"] = new JsonArray(new JsonObject
+{
+    ["kind"] = "ui-artifact",
+    ["ref"] = "screen-main",
+    ["fingerprint"] = "sha256:" + new string('0', 64), // a base that never existed
+});
+var rebased = ChangesetFingerprint.Stamp(stale);
+rebased["approvals"] = new JsonArray(new JsonObject
+{
+    ["fingerprint"] = rebased["fingerprint"]!.GetValue<string>(),
+    ["approvedBy"] = "reviewer",
+    ["approvedAt"] = "2026-08-04T00:00:00Z",
+});
+
+var drifting = new ChangeSession(rebased, "app", adapter, ledger);
+await drifting.BranchAsync();
+drifting.RecordSimulation();
+try
+{
+    await drifting.ApplyAsync(actor: "getting-started-operator");
+    throw new Exception("a drifted base must not land");
+}
+catch (StageRefusedException refusal) when (refusal.Reason == RefusalReason.DriftGate)
+{
+    // which facet, what the changeset stood on, what is live now — as values
+    var which = refusal.Details?["ref"]?.GetValue<string>();
+    var expected = refusal.Details?["expected"]?.GetValue<string>();
+    var actual = refusal.Details?["actual"]?.GetValue<string>();
+    if (which != "screen-main" || expected is null) throw new Exception("expected drift details");
+    Console.WriteLine($"re-base '{which}': authored against {expected}, live is {actual ?? "absent"}");
+}
+await drifting.DiscardAsync();
+```
+
+`Details` is `null` wherever the refusal has no fact a caller could act on
+differently — the fingerprint gate refuses a fingerprint the caller just
+submitted, and echoing it back would inform nobody. Its members are per-gate
+and additive: read the ones you know, ignore the rest.
 
 ## 5. Surviving a restart: rehydration
 

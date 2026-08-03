@@ -17,10 +17,42 @@ public enum RefusalReason
     InvalidStateTransition,
 }
 
-/// <summary>A gate refusal. Stage refuses loudly and specifically — it never guesses (fixed principle 3).</summary>
-public sealed class StageRefusedException(RefusalReason reason, string message) : Exception(message)
+/// <summary>
+/// A gate refusal. Stage refuses loudly and specifically — it never guesses (fixed principle 3).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="Reason"/> says which gate refused; <see cref="Details"/> carries the
+/// specifics that gate observed, so a host can state <em>what</em> went wrong without
+/// parsing <see cref="Exception.Message"/>. The message stays the human sentence and
+/// remains the only place a detail is guaranteed to appear — <c>Details</c> is null
+/// wherever the refusal has no fact a caller could act on differently.
+/// </para>
+/// <para>
+/// The member set inside <c>Details</c> is per-gate and additive: a host reads the
+/// members it knows and ignores the rest. Adding a member is not a breaking change;
+/// removing one is.
+/// </para>
+/// </remarks>
+public sealed class StageRefusedException : Exception
 {
-    public RefusalReason Reason { get; } = reason;
+    private static JsonObject? Snapshot(JsonObject? details) => (JsonObject?)details?.DeepClone();
+
+    public StageRefusedException(RefusalReason reason, string message, JsonObject? details = null)
+        : base(message)
+    {
+        Reason = reason;
+        Details = Snapshot(details);
+    }
+
+    /// <summary>Which gate refused. A closed vocabulary — hosts branch on this.</summary>
+    public RefusalReason Reason { get; }
+
+    /// <summary>
+    /// What that gate observed, as a snapshot taken at throw time (null when the
+    /// refusal carries no actionable fact). Treat as read-only.
+    /// </summary>
+    public JsonObject? Details { get; }
 }
 
 /// <summary>Host policy knobs. Defaults are the safe ones.</summary>
@@ -61,8 +93,17 @@ public sealed class ChangeSession
     {
         var validation = ChangesetValidator.Validate(changeset);
         if (!validation.Valid)
+            // the validator already answers "where and why" per error; joining that
+            // into one sentence and making the host split it back apart would be
+            // throwing away structure Stage was handed.
             throw new StageRefusedException(RefusalReason.InvalidChangeset,
-                "changeset does not validate: " + string.Join("; ", validation.Errors.Select(e => $"{e.Path}: {e.Message}")));
+                "changeset does not validate: " + string.Join("; ", validation.Errors.Select(e => $"{e.Path}: {e.Message}")),
+                new JsonObject
+                {
+                    ["errors"] = new JsonArray(validation.Errors
+                        .Select(e => (JsonNode)new JsonObject { ["path"] = e.Path, ["message"] = e.Message })
+                        .ToArray()),
+                });
         if (!ChangesetFingerprint.Verify(changeset))
             throw new StageRefusedException(RefusalReason.FingerprintGate,
                 "changeset fingerprint is missing or does not match its content (spec §6)");
@@ -99,7 +140,12 @@ public sealed class ChangeSession
         LedgerProjection.Replay(entries).TryGetValue(target, out var view);
         if (view?.PendingStarted is not null)
             throw new StageRefusedException(RefusalReason.InvalidStateTransition,
-                $"target '{target}' has an unreconciled started entry (token {view.PendingStarted.ApplyToken}) — run recovery before rehydrating");
+                $"target '{target}' has an unreconciled started entry (token {view.PendingStarted.ApplyToken}) — run recovery before rehydrating",
+                new JsonObject
+                {
+                    ["target"] = target,
+                    ["unreconciledApplyToken"] = view.PendingStarted.ApplyToken,
+                });
         var latest = view?.AppliedHistory.LastOrDefault();
         if (latest is null || latest.Kind != "apply-completed" || latest.ChangesetFingerprint != session.Fingerprint)
             throw new StageRefusedException(RefusalReason.InvalidStateTransition,
@@ -108,7 +154,14 @@ public sealed class ChangeSession
         var active = await adapter.ActiveStateAsync(target, ct).ConfigureAwait(false);
         if (latest.NewStateRef is null || active.StateRef != latest.NewStateRef)
             throw new StageRefusedException(RefusalReason.DriftGate,
-                $"live active state '{active.StateRef}' does not match the ledger's applied state '{latest.NewStateRef}' — refusing, not guessing");
+                $"live active state '{active.StateRef}' does not match the ledger's applied state '{latest.NewStateRef}' — refusing, not guessing",
+                new JsonObject
+                {
+                    ["scope"] = "active-state",
+                    ["target"] = target,
+                    ["expected"] = latest.NewStateRef,
+                    ["actual"] = active.StateRef,
+                });
 
         session.State = SessionState.Applied;
         return session;
@@ -118,7 +171,13 @@ public sealed class ChangeSession
     {
         if (State != expected)
             throw new StageRefusedException(RefusalReason.InvalidStateTransition,
-                $"{operation} requires state {expected}, but session is {State}");
+                $"{operation} requires state {expected}, but session is {State}",
+                new JsonObject
+                {
+                    ["operation"] = operation,
+                    ["expectedState"] = expected.ToString(),
+                    ["actualState"] = State.ToString(),
+                });
     }
 
     /// <summary>proposed → branched. A branch without a fidelity declaration cannot enter simulation.</summary>
@@ -190,10 +249,28 @@ public sealed class ChangeSession
             var expected = entry["fingerprint"]!.GetValue<string>();
             if (!active.FacetFingerprints.TryGetValue(reference, out var actual))
                 throw new StageRefusedException(RefusalReason.DriftGate,
-                    $"base state ref '{reference}' is not present in the live target — refusing, not guessing");
+                    $"base state ref '{reference}' is not present in the live target — refusing, not guessing",
+                    new JsonObject
+                    {
+                        ["scope"] = "base-state",
+                        ["kind"] = kind,
+                        ["ref"] = reference,
+                        ["expected"] = expected,
+                        ["actual"] = null, // absent, not merely different — the distinction the message makes
+                        ["knownRefs"] = new JsonArray(active.FacetFingerprints.Keys
+                            .OrderBy(k => k, StringComparer.Ordinal).Select(k => (JsonNode)k!).ToArray()),
+                    });
             if (actual != expected)
                 throw new StageRefusedException(RefusalReason.DriftGate,
-                    $"live state of '{reference}' has drifted from the changeset's base ({actual} != {expected}); re-basing is the author's job");
+                    $"live state of '{reference}' has drifted from the changeset's base ({actual} != {expected}); re-basing is the author's job",
+                    new JsonObject
+                    {
+                        ["scope"] = "base-state",
+                        ["kind"] = kind,
+                        ["ref"] = reference,
+                        ["expected"] = expected,
+                        ["actual"] = actual,
+                    });
         }
 
         // Prepare-all: every facet staged and confirmed before any flip
@@ -203,9 +280,14 @@ public sealed class ChangeSession
             .ConfigureAwait(false);
         if (!report.AllComplete)
         {
-            var missing = string.Join(", ", report.FacetComplete.Where(kv => !kv.Value).Select(kv => kv.Key));
+            var incomplete = report.FacetComplete.Where(kv => !kv.Value).Select(kv => kv.Key)
+                .OrderBy(k => k, StringComparer.Ordinal).ToArray();
             throw new StageRefusedException(RefusalReason.PrepareIncomplete,
-                $"prepare did not confirm all facets (incomplete: {missing}) — refusing to flip");
+                $"prepare did not confirm all facets (incomplete: {string.Join(", ", incomplete)}) — refusing to flip",
+                new JsonObject
+                {
+                    ["incompleteFacets"] = new JsonArray(incomplete.Select(f => (JsonNode)f!).ToArray()),
+                });
         }
 
         // Write-ahead ledger, then the one atomic mutation, then completion (fault-model §3).
