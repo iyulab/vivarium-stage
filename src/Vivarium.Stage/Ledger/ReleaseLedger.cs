@@ -91,7 +91,22 @@ public sealed record LedgerEntry(
     }
 }
 
-/// <summary>Persistence port for the ledger — keeps the core hosting-neutral (ADR-0003).</summary>
+/// <summary>
+/// Persistence port for the ledger — keeps the core hosting-neutral (ADR-0003).
+///
+/// <para><b>An implementation stores entries; it does not edit them.</b>
+/// Every member is inside the entry's hash
+/// (<see cref="LedgerIntegrity"/>), so a store that normalizes, reorders
+/// members, drops one it does not recognize, or otherwise round-trips an
+/// entry through a lossy representation will have its own honest history
+/// reported as tampered. <see cref="LedgerEntry.ToJson"/> and
+/// <see cref="LedgerEntry.FromJson"/> round-trip losslessly and are the
+/// intended shape for a store that persists JSON.</para>
+///
+/// <para>Ordering is the ledger's, not the store's:
+/// <see cref="ReadAllAsync"/> may return entries in any order, because every
+/// reader in this library sorts by <see cref="LedgerEntry.Seq"/>.</para>
+/// </summary>
 public interface ILedgerStore
 {
     /// <summary>Durably append one entry. MUST be write-ahead capable: the entry is durable when this returns.</summary>
@@ -122,6 +137,16 @@ public sealed class InMemoryLedgerStore : ILedgerStore
 /// by whom, from which fingerprint. Two write-ahead records per apply
 /// (fault-model §3): <c>apply-started</c> before flip, <c>apply-completed</c>
 /// after. There is no update or delete surface, by design.
+///
+/// <para><b>One ledger per store.</b> An instance reads the store once to
+/// pick up where the history left off and then keeps the sequence and the
+/// chain in memory, so two instances writing to the same store interleave
+/// into duplicated sequence numbers and entries chained onto something that
+/// is no longer their predecessor. Serializing writes through one instance is
+/// what makes the numbering meaningful, and always was; what changed is that
+/// the mistake is now visible — <see cref="VerifyIntegrityAsync"/> reports
+/// such a history as broken instead of it passing unremarked. Being visible
+/// is not being safe: the entries are still written.</para>
 /// </summary>
 public sealed class ReleaseLedger(ILedgerStore store)
 {

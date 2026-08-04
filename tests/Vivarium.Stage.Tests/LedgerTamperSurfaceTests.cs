@@ -265,6 +265,37 @@ public class LedgerTamperSurfaceTests
     }
 
     /// <summary>
+    /// Not tampering, but the chain reports it: two ledgers writing to one
+    /// store. Each keeps the sequence and the chain in memory after reading
+    /// the store once, so interleaved writes duplicate a sequence number and
+    /// chain an entry onto something that is no longer its predecessor.
+    ///
+    /// <para>The hazard predates the chain — the duplicated numbering was
+    /// always wrong and always silent. Recording it here says which way this
+    /// cuts: a broken verdict means the history is not accountable, and
+    /// misuse is one of the ways to get there. The chain makes it visible, not
+    /// safe.</para>
+    /// </summary>
+    [Fact]
+    public async Task Two_ledgers_writing_to_one_store_produce_a_history_that_does_not_verify()
+    {
+        var store = new InMemoryLedgerStore();
+        var one = new ReleaseLedger(store);
+        var other = new ReleaseLedger(store);
+
+        await one.AppendAsync("apply-started", "app", "sha256:aaa", "tok-1", "operator-1", "2026-08-04T00:00:00.000Z");
+        await other.AppendAsync("apply-completed", "app", "sha256:aaa", "tok-1", "operator-1", "2026-08-04T00:00:01.000Z");
+        await one.AppendAsync("rollback-started", "app", "sha256:aaa", "tok-2", "operator-1", "2026-08-04T00:00:02.000Z");
+
+        var entries = await store.ReadAllAsync();
+        Assert.Equal([1L, 2L, 2L], entries.Select(e => e.Seq)); // the duplication, which was always silent
+
+        var report = LedgerIntegrity.Verify(entries);
+        Assert.Equal("broken", report.Verdict);
+        Assert.Contains(report.Findings, f => f.Kind == "broken-link");
+    }
+
+    /// <summary>
     /// What the library refuses at the door, unchanged: an entry kind outside
     /// the vocabulary, on write and on re-import. The chain binds what comes
     /// through that door; it does not replace the door.
