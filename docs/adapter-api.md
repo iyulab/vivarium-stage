@@ -73,6 +73,13 @@ absent — renaming a field the entity does not have. Inventing it (writing an e
 declaration under the new name) produces state no later read can tell from a real
 field. Refuse instead: the operation says what it expected to find.
 
+**Removal is not the exception it looks like.** Deleting something that was never
+there leaves the world in the state the operation asked for, so accepting it seems
+harmless — but the document said a field would go, a reviewer approved that sentence,
+and the ledger records it as done while nothing happened. It is the second failure
+mode above, wearing the one disguise that makes it plausible. Applies to every
+operation that addresses an existing thing, not to the enumerated few.
+
 The exception *type* is the adapter's choice (§Error taxonomy leaves it
 unspecified in v0); the *message* is not optional.
 
@@ -187,7 +194,14 @@ implementation must do but had no way to learn whether it did — and the clause
 that matter most are the ones an adapter's own tests are least likely to reach:
 throwing for an unknown target instead of inventing a pointer, staying
 idempotent when recovery re-issues a flip token, refusing that token for a
-different state, declaring branch fidelity honestly.
+different state, declaring branch fidelity honestly, refusing a well-formed
+operation whose target does not exist.
+
+That last one is here because the reference implementation got it wrong in the
+direction this section warns about: the rule was applied to the operations where
+an invented target is visible afterwards, and missed on the ones where a quiet
+success looks like the intended outcome. A clause held by some operations and not
+others is a clause nobody is checking.
 
 `Vivarium.Stage.Conformance.AdapterConformance.RunAsync` checks an
 implementation against these clauses and returns a `ConformanceReport`:

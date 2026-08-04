@@ -103,6 +103,19 @@ public class ConformanceTests
     }
 
     [Fact]
+    public async Task Accepting_a_well_formed_operation_on_an_absent_target_fails()
+    {
+        // Not every false input is malformed. Removal is where the quiet success is
+        // most convincing — the target is supposed to end up absent, so an operation
+        // naming something nobody has looks exactly like one that worked.
+        var adapter = new AcceptsRemovalOfAnAbsentTarget(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        AssertFailedOnly(report, ConformanceIds.PrepareRefusesAbsentSchemaTarget);
+    }
+
+    [Fact]
     public async Task Accepting_a_malformed_schema_operation_fails()
     {
         // The clause covers every facet; so must the kit. An operation outside the
@@ -297,6 +310,26 @@ public class ConformanceTests
                     ["schema"] = true, ["ui"] = true, ["data"] = true,
                 });
             }
+        }
+    }
+
+    /// <summary>
+    /// The shape this check exists for: the operation is well formed, its target is
+    /// not there, and the adapter reports the facet complete anyway. Only removal is
+    /// intercepted, so the failure lands on the absent-target clause and nowhere else.
+    /// </summary>
+    private sealed class AcceptsRemovalOfAnAbsentTarget(IBackendAdapter inner) : Passthrough(inner)
+    {
+        public override async Task<PrepareReport> PrepareAsync(
+            string branchRef, PreparedFacets facets, CancellationToken ct = default)
+        {
+            var schema = facets.Patches["schema"] as JsonArray ?? [];
+            if (schema.OfType<JsonObject>().Any(o => o["op"]?.GetValue<string>() == "entity.remove"))
+                return new PrepareReport(new Dictionary<string, bool>
+                {
+                    ["schema"] = true, ["ui"] = true, ["data"] = true,
+                });
+            return await Inner.PrepareAsync(branchRef, facets, ct);
         }
     }
 

@@ -31,6 +31,7 @@ public static class ConformanceIds
     public const string PrepareHasNoLiveEffect = "adapter-api §3/prepare-has-no-live-effect";
     public const string PrepareRefusesMalformedDataOp = "adapter-api §3/prepare-refuses-malformed-data-operation";
     public const string PrepareRefusesMalformedSchemaOp = "adapter-api §3/prepare-refuses-malformed-schema-operation";
+    public const string PrepareRefusesAbsentSchemaTarget = "adapter-api §3/prepare-refuses-absent-schema-target";
     public const string ActiveStateReturnsRefAndFingerprints = "adapter-api §3/active-state-returns-ref-and-fingerprints";
     public const string ActiveStateDeterministic = "adapter-api §3/active-state-deterministic";
     public const string UnknownTargetThrows = "adapter-api §Error-taxonomy/unknown-target-throws";
@@ -377,6 +378,49 @@ public static class AdapterConformance
                     "the refusal carried no message — §Error taxonomy requires a reason, and an empty one is not a reason");
             else
                 Pass(ConformanceIds.PrepareRefusesMalformedSchemaOp, malformedSchemaTitle);
+        }
+
+        // The clause does not stop at malformed documents. An operation can be
+        // perfectly well formed and still name something that is not there, and the
+        // contract answers that case too: refuse, because the operation says what it
+        // expected to find. Inventing the target is one failure; reporting the facet
+        // complete without touching anything is the other, and removal is where the
+        // second one is most convincing — the target is supposed to end up absent, so
+        // an operation naming an entity nobody has looks exactly like one that worked.
+        const string absentTargetTitle = "prepare refuses a well-formed operation naming an absent target";
+        var absentTarget = new System.Text.Json.Nodes.JsonObject
+        {
+            ["schema"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+            {
+                ["op"] = "entity.remove",
+                ["entity"] = "conformance-absent-entity",
+                ["explanation"] = "conformance probe — the target does not exist and must be refused",
+            }),
+            ["ui"] = new System.Text.Json.Nodes.JsonArray(),
+            ["data"] = new System.Text.Json.Nodes.JsonArray(),
+        };
+        try
+        {
+            await adapter.PrepareAsync(
+                branch.BranchRef,
+                new PreparedFacets($"{fingerprint}-absent-target", absentTarget),
+                ct);
+            Fail(ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle,
+                "prepare accepted a removal of an entity that is not there — it staged nothing and reported the facet complete, so an approved document says a thing was removed that never existed");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (NullReferenceException)
+        {
+            Fail(ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle,
+                "prepare dereferenced an absent member instead of refusing — a null-reference fault is an accident, not a reason (§Error taxonomy)");
+        }
+        catch (Exception e)
+        {
+            if (string.IsNullOrWhiteSpace(e.Message))
+                Fail(ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle,
+                    "the refusal carried no message — §Error taxonomy requires a reason, and an empty one is not a reason");
+            else
+                Pass(ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle);
         }
 
         const string prepareLiveTitle = "prepare has no live effect";

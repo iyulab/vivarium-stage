@@ -110,23 +110,47 @@ public class SchemaAndUiOperationInputTests
     }
 
     /// <summary>
-    /// Renaming or retyping a field that is not there used to succeed quietly —
-    /// rename wrote a null under the new name, producing a declared field that no
-    /// later read tells apart from a real one.
+    /// Operating on a field that is not there used to succeed quietly — rename wrote
+    /// a null under the new name, producing a declared field that no later read tells
+    /// apart from a real one, and remove reported success for a field it never found.
+    /// The clause names no operations, so neither does this theory: every schema
+    /// operation that addresses a field belongs here, and widening the vocabulary
+    /// must widen the row set rather than leave the new operation unexamined.
     /// </summary>
     [Theory]
     [InlineData("field.rename")]
     [InlineData("field.retype")]
+    [InlineData("field.remove")]
     public async Task OperatingOnAFieldThatIsNotThereIsRefusedRatherThanInvented(string op)
     {
         var (adapter, branchRef) = await BranchedAsync();
         var patch = new JsonObject { ["op"] = op, ["entity"] = "Item", ["field"] = "no-such-field" };
-        patch[op == "field.rename" ? "newName" : "newType"] = "whatever";
+        if (op == "field.rename") patch["newName"] = "whatever";
+        if (op == "field.retype") patch["newType"] = "whatever";
 
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => Prepare(adapter, branchRef, SchemaPatches(patch)));
 
+        Assert.IsNotType<NullReferenceException>(ex);
         Assert.Contains("no such field", ex.Message);
         Assert.DoesNotContain("no-such-field", adapter.WorldCanonical(branchRef));
+    }
+
+    /// <summary>
+    /// Removing an entity that is not there is the same defect one level up, and the
+    /// one where a quiet success is most convincing: removal's whole purpose is that
+    /// the target ends up absent, so an operation naming an entity nobody has looks
+    /// exactly like one that worked. The document said what it expected to find.
+    /// </summary>
+    [Fact]
+    public async Task RemovingAnEntityThatIsNotThereIsRefusedRatherThanReportedDone()
+    {
+        var (adapter, branchRef) = await BranchedAsync();
+        var patch = new JsonObject { ["op"] = "entity.remove", ["entity"] = "NoSuchEntity" };
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => Prepare(adapter, branchRef, SchemaPatches(patch)));
+
+        Assert.IsNotType<NullReferenceException>(ex);
+        Assert.Contains("NoSuchEntity", ex.Message);
     }
 
     [Fact]

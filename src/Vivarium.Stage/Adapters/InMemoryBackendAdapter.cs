@@ -258,6 +258,11 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 entities[op["newName"]!.GetValue<string>()] = renamed.DeepClone();
                 break;
             case "entity.remove":
+                // Removal is where a quiet success is most convincing: the target is
+                // supposed to end up absent, so an operation naming an entity nobody
+                // has looks exactly like one that worked. EntityObj() is the same
+                // door the other operations go through.
+                EntityObj();
                 entities.Remove(entity);
                 break;
             case "field.add":
@@ -284,7 +289,14 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 target["type"] = op["newType"]!.GetValue<string>();
                 break;
             case "field.remove":
-                ((JsonObject)EntityObj()["fields"]!).Remove(op["field"]!.GetValue<string>());
+                var removeName = op["field"]!.GetValue<string>();
+                var removeFrom = (JsonObject)EntityObj()["fields"]!;
+                // Remove returns false for a key that was never there, and reporting
+                // the facet complete on that is completion for work not done: an
+                // approved document said this field would go, and nothing went.
+                if (!removeFrom.Remove(removeName))
+                    throw new InvalidOperationException(
+                        $"cannot remove '{removeName}' on entity '{entity}': no such field");
                 break;
             case "constraint.add":
                 ((JsonArray)EntityObj()["constraints"]!).Add(op["constraint"]!.DeepClone());
