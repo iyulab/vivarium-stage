@@ -75,11 +75,13 @@ out-of-band, the second that the adapter cannot account for the target at all
 (state lost, partially restored, renamed — adapters MUST throw rather than
 invent a pointer, see adapter-api §Error taxonomy).
 
-**The operator's resolution is a sixth cell, not a repeat of the others.**
-An operator closing an unresolved target supplies knowledge the library does
-not have, so their verdict MUST be recorded as `operator-declared` and MUST
-NOT borrow one of the four reasons above: those name what the active state
-supported, and nothing about the active state changed. The resolution is
+**The operator's resolution is a column of its own, not a repeat of the
+others.** An operator closing an unresolved target supplies knowledge the
+library does not have, so their verdict MUST be recorded under a fifth reason,
+`operator-declared`, and MUST NOT borrow one of the four above: those name
+what the active state supported, and nothing about the active state changed.
+The table itself is unchanged — reconciliation still reads only those four,
+and the fifth column is reachable only through an operator. The resolution is
 admitted only for a target that actually has an operation in flight, and takes
 its apply token and state refs from the pending entry rather than from the
 caller — an intervention closes a question the ledger already asked, and may
