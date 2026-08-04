@@ -28,7 +28,7 @@ public class RecoveryTests
 
         // the reference adapter throws on an unknown target — recovery must
         // judge that ("the active pointer is unreadable"), not propagate it
-        var outcomes = await StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider());
+        var outcomes = (await StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider())).Outcomes;
 
         var outcome = Assert.Single(outcomes);
         Assert.Equal("unresolved", outcome.Resolution);
@@ -54,7 +54,7 @@ public class RecoveryTests
             "2026-07-21T00:00:01.000Z", previousStateRef: "live-known", newStateRef: branch.BranchRef);
         await adapter.FlipAsync("known", branch.BranchRef, "tok-known");
 
-        var outcomes = await StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider());
+        var outcomes = (await StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider())).Outcomes;
 
         // both targets are reported — the unreadable one does not abort the sweep
         Assert.Equal(2, outcomes.Count);
@@ -79,7 +79,7 @@ public class RecoveryTests
         world.Adapter.Fault = FaultPoint.AfterFlip;
         await Assert.ThrowsAsync<SimulatedCrashException>(() => session.ApplyAsync("operator-1", applyToken: "tok-fp"));
 
-        var outcome = Assert.Single(await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock));
+        var outcome = Assert.Single((await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock)).Outcomes);
 
         // the ledger already knows which changeset this was — consumers should
         // not have to re-read a projection and join on the apply token
@@ -96,7 +96,7 @@ public class RecoveryTests
         var session = await world.SimulatedSessionAsync();
         world.Adapter.Fault = FaultPoint.BeforeFlip;
         await Assert.ThrowsAsync<SimulatedCrashException>(() => session.ApplyAsync("operator-1"));
-        var aborted = Assert.Single(await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock));
+        var aborted = Assert.Single((await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock)).Outcomes);
         Assert.Equal("aborted", aborted.Resolution);
         Assert.Equal("active-matches-previous", aborted.Reason);
 
@@ -107,7 +107,7 @@ public class RecoveryTests
         await Assert.ThrowsAsync<SimulatedCrashException>(() => s2.ApplyAsync("operator-1"));
         var oob = await other.Inner.BranchAsync(TestWorld.TargetName);
         await other.Inner.FlipAsync(TestWorld.TargetName, oob.BranchRef, "oob");
-        var neither = Assert.Single(await StageRecovery.RecoverAsync(other.Ledger, other.Adapter, other.Clock));
+        var neither = Assert.Single((await StageRecovery.RecoverAsync(other.Ledger, other.Adapter, other.Clock)).Outcomes);
         Assert.Equal("unresolved", neither.Resolution);
         Assert.Equal("active-matches-neither", neither.Reason);
     }
@@ -120,7 +120,7 @@ public class RecoveryTests
         var s1 = await applied.SimulatedSessionAsync();
         applied.Adapter.Fault = FaultPoint.AfterFlip;
         await Assert.ThrowsAsync<SimulatedCrashException>(() => s1.ApplyAsync("operator-1"));
-        var apply = Assert.Single(await StageRecovery.RecoverAsync(applied.Ledger, applied.Adapter, applied.Clock));
+        var apply = Assert.Single((await StageRecovery.RecoverAsync(applied.Ledger, applied.Adapter, applied.Clock)).Outcomes);
         Assert.Equal("apply", apply.PendingOperation);
         Assert.Equal("completed", apply.Resolution);
 
@@ -130,7 +130,7 @@ public class RecoveryTests
         await s2.ApplyAsync("operator-1");
         rolled.Adapter.Fault = FaultPoint.BeforeFlip;
         await Assert.ThrowsAsync<SimulatedCrashException>(() => s2.RollbackAsync("operator-1"));
-        var rollback = Assert.Single(await StageRecovery.RecoverAsync(rolled.Ledger, rolled.Adapter, rolled.Clock));
+        var rollback = Assert.Single((await StageRecovery.RecoverAsync(rolled.Ledger, rolled.Adapter, rolled.Clock)).Outcomes);
         Assert.Equal("rollback", rollback.PendingOperation);
         Assert.Equal("aborted", rollback.Resolution);
 
@@ -151,7 +151,7 @@ public class RecoveryTests
         await ledger.AppendAsync("rollback-started", "ghost", "sha256:ghost", "tok-ghost", "operator-1",
             "2026-07-22T00:00:00.000Z", previousStateRef: "live-ghost", newStateRef: "prior-1");
 
-        var unreadable = Assert.Single(await StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider()));
+        var unreadable = Assert.Single((await StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider())).Outcomes);
         Assert.Equal("unresolved", unreadable.Resolution);
         Assert.Equal("active-state-unreadable", unreadable.Reason);
         Assert.Equal("rollback", unreadable.PendingOperation);
@@ -164,7 +164,7 @@ public class RecoveryTests
         var oob = await world.Inner.BranchAsync(TestWorld.TargetName);
         await world.Inner.FlipAsync(TestWorld.TargetName, oob.BranchRef, "oob");
 
-        var neither = Assert.Single(await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock));
+        var neither = Assert.Single((await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock)).Outcomes);
         Assert.Equal("active-matches-neither", neither.Reason);
         Assert.Equal("apply", neither.PendingOperation);
     }
@@ -181,7 +181,7 @@ public class RecoveryTests
 
         // a cancelled caller must not be reported as "we couldn't read the pointer"
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider(), cts.Token));
+            () => StageRecovery.RecoverAsync(ledger, adapter, new FixedTimeProvider(), ct: cts.Token));
         Assert.Single(await ledger.ReadAllAsync()); // nothing appended
     }
 

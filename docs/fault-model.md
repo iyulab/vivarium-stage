@@ -58,7 +58,7 @@ its own axes rather than as a single opaque label: the **row** is
 `PendingOperation` (`apply` | `rollback`), the **cell** is `Resolution`
 (`completed` | `aborted` | `unresolved`), and the **column** is `Reason`
 (`active-matches-new` | `active-matches-previous` | `active-matches-neither` |
-`active-state-unreadable`). For the resolved cells the appended entry kind is
+`active-state-unreadable` | `operator-declared`). For the resolved cells the appended entry kind is
 exactly `{PendingOperation}-{Resolution}`. A consumer therefore reads the table
 straight off the outcome — it never has to re-read the ledger to learn which
 row it was on.
@@ -74,6 +74,18 @@ they call for different intervention: the first says the target moved
 out-of-band, the second that the adapter cannot account for the target at all
 (state lost, partially restored, renamed — adapters MUST throw rather than
 invent a pointer, see adapter-api §Error taxonomy).
+
+**The operator's resolution is a sixth cell, not a repeat of the others.**
+An operator closing an unresolved target supplies knowledge the library does
+not have, so their verdict MUST be recorded as `operator-declared` and MUST
+NOT borrow one of the four reasons above: those name what the active state
+supported, and nothing about the active state changed. The resolution is
+admitted only for a target that actually has an operation in flight, and takes
+its apply token and state refs from the pending entry rather than from the
+caller — an intervention closes a question the ledger already asked, and may
+not raise a new one. The actor recorded on entries the library reconciled by
+reading live state is reserved, so an assertion can never be read back as a
+verification.
 
 **Recovery is per-target and total.** A target whose active pointer cannot be
 read yields a verdict, not an exception: one unaccountable target MUST NOT

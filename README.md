@@ -39,7 +39,7 @@ Preview and release are one repository because they are one state machine: a bra
 
 - **The lifecycle service.** The state machine above, exposed as an API: create branch, run simulation, gate and execute apply, roll back, inspect history.
 - **The backend adapter boundary.** Stage speaks to schema/data backends through adapters. This repository ships the [boundary contract](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md), a reference in-memory adapter, and an **executable conformance suite** that checks any implementation against the contract's clauses — so "does my adapter conform?" is a question you run, not one you read. Real-backend adapters live with the consuming application. The boundary is designed in from the start — Stage must not be un-portable from any one backend.
-- **The release ledger.** An append-only history of what was applied, when, by whom, from which fingerprint — the audit trail a runtime-mutable platform owes its operators.
+- **The release ledger.** An append-only history of what was applied, when, by whom, from which fingerprint — the audit trail a runtime-mutable platform owes its operators. Entries are chained, so the ledger can say whether its own history was rewritten rather than only promising that it was not; the check reports what it could not cover instead of implying it covered everything.
 - **Live propagation hooks.** After a successful apply, connected clients are told to pick up the new world. The mechanism is adapter/host territory; the hook is Stage's.
 
 ## What this repository is not
@@ -57,7 +57,7 @@ Preview and release are one repository because they are one state machine: a bra
 3. **Drift refuses, never guesses.** If the live base state no longer matches the changeset's provenance, Stage rejects; re-basing is the author's job, not the applier's.
 4. **Every apply has a return path.** A changeset that cannot be rolled back (or explicitly, reviewably declares itself irreversible) does not get applied.
 5. **Simulation is honest.** A branch must be faithful enough that "it worked in preview" is evidence, not superstition. Where fidelity is limited, Stage says so rather than pretending.
-6. **The ledger is append-only.** History is never rewritten.
+6. **The ledger is append-only.** History is never rewritten — and the ledger can be asked whether that held, instead of the promise resting on the store's good behaviour alone.
 
 ## Decided in v0
 

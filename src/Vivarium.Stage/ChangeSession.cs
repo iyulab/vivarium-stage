@@ -15,6 +15,16 @@ public enum RefusalReason
     DegradedAdapter,
     PrepareIncomplete,
     InvalidStateTransition,
+
+    /// <summary>
+    /// The release ledger's own history does not verify
+    /// (<see cref="Ledger.LedgerIntegrity"/>). Raised only where a host has
+    /// asked for it — see <see cref="StagePolicy.RequireIntactLedger"/>. It is
+    /// its own reason because the response is unlike every other refusal
+    /// here: the others are answered by changing the changeset or the target,
+    /// this one by going to look at the store.
+    /// </summary>
+    LedgerIntegrityGate,
 }
 
 /// <summary>
@@ -100,6 +110,24 @@ public sealed record StagePolicy
 {
     /// <summary>Applying through an adapter without the atomic swap primitive requires explicit consent (fault-model §4).</summary>
     public bool AcceptDegradedAdapter { get; init; }
+
+    /// <summary>
+    /// Refuse to recover from a ledger whose history does not verify, instead
+    /// of reporting the verdict and continuing.
+    ///
+    /// <para>Off by default, and that default is the substantive choice. The
+    /// ledger is recovery's judgement input, so a damaged one is precisely
+    /// when a host may most need to recover — refusing by default would let a
+    /// failed integrity check take the recovery path down with it. A host
+    /// under an obligation that makes proceeding the wrong answer turns this
+    /// on; the library does not weigh that obligation on anyone's behalf.</para>
+    ///
+    /// <para>Only a <c>broken</c> verdict refuses. History written before the
+    /// ledger began chaining verifies as <c>unverifiable</c>, which is a
+    /// statement about coverage, not a finding — refusing on it would make
+    /// this switch unusable for exactly the deployments that have history.</para>
+    /// </summary>
+    public bool RequireIntactLedger { get; init; }
 
     public static StagePolicy Default { get; } = new();
 }

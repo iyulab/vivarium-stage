@@ -283,7 +283,14 @@ Recovery reports a verdict per target rather than throwing, so one
 unaccountable target never blocks the rest:
 
 ```csharp
-foreach (var outcome in await StageRecovery.RecoverAsync(ledger, adapter))
+var recovery = await StageRecovery.RecoverAsync(ledger, adapter);
+
+// The ledger is what recovery reasoned from, so it says what it made of it:
+// intact | broken | unverifiable — the last meaning nothing was checked,
+// which is not the same answer as "nothing was wrong".
+Console.WriteLine($"ledger: {recovery.Integrity.Verdict}");
+
+foreach (var outcome in recovery.Outcomes)
 {
     // PendingOperation: apply | rollback   (which operation was in flight)
     // Resolution: completed | aborted | unresolved
@@ -307,6 +314,76 @@ moved out-of-band or could not be read at all (an adapter must throw for a
 target it does not know rather than invent a pointer). The pending entry
 stays visible until an operator resolves it: Stage refuses rather than
 guessing, here as everywhere.
+
+### The operator's half
+
+Someone with knowledge the library does not have closes an `unresolved`
+target. That is a judgement, not a reading, and the ledger records it as one:
+
+```csharp
+foreach (var stuck in recovery.Outcomes.Where(o => o.Resolution == "unresolved"))
+{
+    var resolved = await StageRecovery.ResolveAsync(
+        ledger, stuck.Target, resolution: "aborted", actor: "alice");
+
+    // Resolution: what the operator declared (completed | aborted)
+    // Reason: operator-declared — the one verdict no live state supports
+    Console.WriteLine($"{resolved.Target}: {resolved.Resolution} ({resolved.Reason})");
+}
+```
+
+The entry is admitted only if that target actually has an operation in
+flight, takes its apply token and state refs from the pending entry rather
+than from the caller, and records the operator as its actor. `"stage-recovery"`
+is reserved for resolutions the library verified itself, so an assertion can
+never be read back as a verification.
+
+### Whether the history can be trusted
+
+Entries are chained: each carries its own hash and the hash of the one before
+it, so an entry that was edited, removed from the middle, inserted or
+reordered no longer fits. Verification is a separate reading, because an audit
+is someone holding the exported file:
+
+```csharp
+var integrity = LedgerIntegrity.Verify(ReleaseLedger.ParseExport(export));
+if (integrity.Verdict == "broken")
+    foreach (var finding in integrity.Findings)
+        Console.WriteLine($"seq {finding.Seq}: {finding.Message}");
+```
+
+Three verdicts, and the third earns its place: `unverifiable` means no entry
+carries a chain — history written before this ledger began chaining verifies
+as that rather than as `intact`, and `UnverifiedPrefix` counts how many
+entries the check could not speak for. Such history is never re-hashed on
+import; doing so would assert it was never altered instead of verifying it.
+Older exports therefore need no migration.
+
+By default recovery reports the verdict and carries on: a damaged ledger is
+when a host may most need to recover, so refusing by default would take the
+recovery path down with the check. A host for whom stopping is the right
+answer says so, and gets a refusal carrying the findings:
+
+```csharp
+try
+{
+    await StageRecovery.RecoverAsync(ledger, adapter,
+        policy: new StagePolicy { RequireIntactLedger = true });
+}
+catch (StageRefusedException refusal)
+    when (refusal.Reason == RefusalReason.LedgerIntegrityGate)
+{
+    // refusal.Details carries verdict, unverifiedPrefix and findings[]
+}
+```
+
+**What the chain does not catch**: dropping the newest entries. A shorter
+history is a self-consistent one — nothing inside a ledger says how far it
+should reach — and appending afterwards closes over the gap rather than
+exposing it. Detecting that needs a fixed point held where the store cannot
+reach it, which this version does not have. What the chain does buy is that
+every other edit becomes visible, and that a convincing forgery costs the
+whole ledger from the tampered entry onward instead of one line.
 
 ## Real backends: the adapter boundary
 

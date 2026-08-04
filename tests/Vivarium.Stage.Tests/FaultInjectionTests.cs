@@ -59,7 +59,7 @@ public class FaultInjectionTests
         AssertNoLiveEffect(world, before); // prepared but never flipped
 
         // ledger has started-without-completed; recovery reads the active state and aborts
-        var outcomes = await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock);
+        var outcomes = (await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock)).Outcomes;
         var outcome = Assert.Single(outcomes);
         Assert.Equal("aborted", outcome.Resolution);
         AssertNoLiveEffect(world, before);
@@ -110,7 +110,7 @@ public class FaultInjectionTests
         Assert.Equal("tok-f5", pendingView.PendingStarted!.ApplyToken);
 
         // recovery: the active state's fingerprint decides — never guesses
-        var outcomes = await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock);
+        var outcomes = (await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock)).Outcomes;
         Assert.Equal("completed", Assert.Single(outcomes).Resolution);
 
         var entries = await world.Ledger.ReadAllAsync();
@@ -144,7 +144,7 @@ public class FaultInjectionTests
         Assert.Equal(preApply, active); // this variant landed
 
         // recovery closes the rollback from the active state
-        var outcomes = await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock);
+        var outcomes = (await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock)).Outcomes;
         Assert.Equal("completed", Assert.Single(outcomes).Resolution);
         Assert.Equal("rollback-completed", (await world.Ledger.ReadAllAsync()).Last().Kind);
     }
@@ -163,7 +163,7 @@ public class FaultInjectionTests
         Assert.Equal(postApply, world.Inner.ActiveWorldCanonical(TestWorld.TargetName));
 
         // recovery must say "the rollback aborted" — not "the apply aborted"
-        var outcomes = await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock);
+        var outcomes = (await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock)).Outcomes;
         Assert.Equal("aborted", Assert.Single(outcomes).Resolution);
         var entries = await world.Ledger.ReadAllAsync();
         var reconciled = entries.Last();
@@ -191,7 +191,7 @@ public class FaultInjectionTests
         await world.Inner.FlipAsync(TestWorld.TargetName, oob.BranchRef, "oob-token");
 
         var countBefore = (await world.Ledger.ReadAllAsync()).Count;
-        var outcomes = await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock);
+        var outcomes = (await StageRecovery.RecoverAsync(world.Ledger, world.Adapter, world.Clock)).Outcomes;
         Assert.Equal("unresolved", Assert.Single(outcomes).Resolution);
 
         // never guesses: nothing appended, the pending entry stays visible for the operator
