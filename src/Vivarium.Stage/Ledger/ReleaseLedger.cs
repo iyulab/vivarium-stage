@@ -25,6 +25,23 @@ public sealed record LedgerEntry(
     public static readonly string[] Kinds =
         ["apply-started", "apply-completed", "rollback-started", "rollback-completed", "apply-aborted", "rollback-aborted"];
 
+    /// <summary>
+    /// The hash of the entry before this one, binding the two together
+    /// (<see cref="LedgerIntegrity"/>). Null on the entry that begins the
+    /// chain — including a ledger whose earlier history predates chaining,
+    /// where the null marks the boundary between what can be verified and
+    /// what cannot.
+    /// </summary>
+    /// <remarks>
+    /// Init-only rather than positional: this record grows, and every
+    /// positional addition breaks callers who deconstruct it — the lesson
+    /// <see cref="RecoveryOutcome"/> already paid for.
+    /// </remarks>
+    public string? PreviousEntryHash { get; init; }
+
+    /// <summary>This entry's own hash. Null on entries written before the ledger chained.</summary>
+    public string? EntryHash { get; init; }
+
     public JsonObject ToJson()
     {
         var obj = new JsonObject
@@ -41,6 +58,8 @@ public sealed record LedgerEntry(
         if (PreviousStateRef is not null) obj["previousStateRef"] = PreviousStateRef;
         if (NewStateRef is not null) obj["newStateRef"] = NewStateRef;
         if (Reconciled) obj["reconciled"] = true;
+        if (PreviousEntryHash is not null) obj["previousEntryHash"] = PreviousEntryHash;
+        if (EntryHash is not null) obj["entryHash"] = EntryHash;
         return obj;
     }
 
@@ -59,7 +78,16 @@ public sealed record LedgerEntry(
             obj["fidelity"] as JsonObject,
             obj["previousStateRef"]?.GetValue<string>(),
             obj["newStateRef"]?.GetValue<string>(),
-            obj["reconciled"]?.GetValue<bool>() ?? false);
+            obj["reconciled"]?.GetValue<bool>() ?? false)
+        {
+            // Absent on history written before the ledger chained: such an
+            // entry re-imports as unchained and verification reports it as
+            // part of the unverified prefix. No migration is required, and
+            // none is offered — re-hashing old history would assert it was
+            // never altered rather than verify it.
+            PreviousEntryHash = obj["previousEntryHash"]?.GetValue<string>(),
+            EntryHash = obj["entryHash"]?.GetValue<string>(),
+        };
     }
 }
 
@@ -98,6 +126,7 @@ public sealed class InMemoryLedgerStore : ILedgerStore
 public sealed class ReleaseLedger(ILedgerStore store)
 {
     private long _seq = -1; // -1 = not yet initialized from the store
+    private string? _previousEntryHash;
     private readonly SemaphoreSlim _appendLock = new(1, 1);
 
     public async Task<LedgerEntry> AppendAsync(
@@ -120,14 +149,28 @@ public sealed class ReleaseLedger(ILedgerStore store)
         {
             if (_seq < 0)
             {
-                // resume numbering after existing history — history is never rewritten
+                // Resume numbering and the chain after existing history —
+                // history is never rewritten. Both resume from the entry with
+                // the highest seq rather than the last one the store handed
+                // back: a store is free to return its own ordering, and
+                // chaining onto the wrong entry would break the chain on the
+                // first append after a restart.
                 var existing = await store.ReadAllAsync(ct).ConfigureAwait(false);
-                _seq = existing.Count == 0 ? 0 : existing.Max(e => e.Seq);
+                var last = existing.MaxBy(e => e.Seq);
+                _seq = last?.Seq ?? 0;
+                _previousEntryHash = last?.EntryHash;
             }
             var entry = new LedgerEntry(
                 ++_seq, kind, target, changesetFingerprint, applyToken, actor, at,
-                fidelity, previousStateRef, newStateRef, reconciled);
+                fidelity, previousStateRef, newStateRef, reconciled)
+            {
+                PreviousEntryHash = _previousEntryHash,
+            };
+            entry = entry with { EntryHash = LedgerIntegrity.HashOf(entry) };
             await store.AppendAsync(entry, ct).ConfigureAwait(false);
+            // Only after the append is durable: a failed append leaves the
+            // chain pointing at the last entry that actually exists.
+            _previousEntryHash = entry.EntryHash;
             return entry;
         }
         finally
@@ -145,6 +188,17 @@ public sealed class ReleaseLedger(ILedgerStore store)
         foreach (var e in await ReadAllAsync(ct).ConfigureAwait(false)) arr.Add(e.ToJson());
         return arr.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
+
+    /// <summary>
+    /// Verify that this ledger's history is intact — that no entry was edited,
+    /// removed, inserted or reordered since it was written
+    /// (<see cref="LedgerIntegrity"/>, which also states what the check cannot
+    /// see). Reading and checking are separate on purpose: an exported audit
+    /// artifact is verified with <see cref="LedgerIntegrity.Verify"/> by
+    /// whoever holds it, with no live store involved.
+    /// </summary>
+    public async Task<LedgerIntegrityReport> VerifyIntegrityAsync(CancellationToken ct = default) =>
+        LedgerIntegrity.Verify(await ReadAllAsync(ct).ConfigureAwait(false));
 
     /// <summary>Rehydrate a ledger's entries from an exported JSON array (machine-verifiable round-trip).</summary>
     public static IReadOnlyList<LedgerEntry> ParseExport(string json)
