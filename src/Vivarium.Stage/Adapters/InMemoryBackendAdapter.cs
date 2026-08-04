@@ -304,9 +304,20 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             case "constraint.remove":
                 var constraints = (JsonArray)EntityObj()["constraints"]!;
                 var toRemove = JsonCanonicalizer.Canonicalize(op["constraint"]!.ToJsonString());
+                // A constraint is addressed by its whole shape rather than by a name,
+                // so "remove the ones that match" reads like a filter and matching
+                // nothing looks like a legitimate outcome. It is not: the document
+                // named a constraint it expected to find.
+                var removed = false;
                 for (var i = constraints.Count - 1; i >= 0; i--)
                     if (JsonCanonicalizer.Canonicalize(constraints[i]!.ToJsonString()) == toRemove)
+                    {
                         constraints.RemoveAt(i);
+                        removed = true;
+                    }
+                if (!removed)
+                    throw new InvalidOperationException(
+                        $"cannot remove a constraint on entity '{entity}': no such constraint");
                 break;
             default:
                 // unreachable: the vocabulary is checked before anything is applied.

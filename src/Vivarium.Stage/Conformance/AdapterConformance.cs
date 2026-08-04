@@ -420,7 +420,15 @@ public static class AdapterConformance
                 Fail(ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle,
                     "the refusal carried no message — §Error taxonomy requires a reason, and an empty one is not a reason");
             else
-                Pass(ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle);
+                // §7: where a check verifies only part of what it appears to, it names
+                // the part it could not reach. The probe addresses an entity, because
+                // that is the only absent target the suite can name without knowing
+                // the fixture's schema — an adapter that refuses this one and still
+                // accepts removal of an absent field or constraint passes here.
+                checks.Add(new ConformanceCheck(
+                    ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle,
+                    ConformanceOutcome.Passed,
+                    "verified at the entity level only — the suite cannot name a field or constraint the fixture is known to lack"));
         }
 
         const string prepareLiveTitle = "prepare has no live effect";

@@ -77,8 +77,15 @@ field. Refuse instead: the operation says what it expected to find.
 there leaves the world in the state the operation asked for, so accepting it seems
 harmless — but the document said a field would go, a reviewer approved that sentence,
 and the ledger records it as done while nothing happened. It is the second failure
-mode above, wearing the one disguise that makes it plausible. Applies to every
-operation that addresses an existing thing, not to the enumerated few.
+mode above, wearing the one disguise that makes it plausible. It holds for every
+removal in the vocabulary — entity, field, and constraint — and a constraint is the
+one most easily missed, because it is addressed by its whole shape rather than by a
+name, so "remove the ones that match" reads like a filter and matching nothing reads
+like a legitimate outcome.
+
+A data operation is different and deliberately so: `where` is a predicate, and a
+predicate that selects no rows has done what it said. The distinction is whether the
+document **named** a thing it expected to find.
 
 The exception *type* is the adapter's choice (§Error taxonomy leaves it
 unspecified in v0); the *message* is not optional.

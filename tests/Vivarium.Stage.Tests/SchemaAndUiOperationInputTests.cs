@@ -153,6 +153,33 @@ public class SchemaAndUiOperationInputTests
         Assert.Contains("NoSuchEntity", ex.Message);
     }
 
+    /// <summary>
+    /// The third removal in the vocabulary, and the one easiest to miss: a constraint
+    /// is addressed by its whole shape rather than by a name, so "remove the ones that
+    /// match" reads like a filter and quietly matches nothing. The document still
+    /// named a constraint it expected to find.
+    /// </summary>
+    [Fact]
+    public async Task RemovingAConstraintThatIsNotThereIsRefusedRatherThanReportedDone()
+    {
+        var (adapter, branchRef) = await BranchedAsync();
+        var patch = new JsonObject
+        {
+            ["op"] = "constraint.remove",
+            ["entity"] = "Item",
+            ["constraint"] = new JsonObject
+            {
+                ["kind"] = "unique",
+                ["fields"] = new JsonArray("no-such-field"),
+            },
+        };
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => Prepare(adapter, branchRef, SchemaPatches(patch)));
+
+        Assert.IsNotType<NullReferenceException>(ex);
+        Assert.Contains("no such constraint", ex.Message);
+    }
+
     [Fact]
     public async Task ARefusedDocumentStagesNothingAcrossFacets()
     {
