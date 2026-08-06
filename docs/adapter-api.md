@@ -90,6 +90,30 @@ document **named** a thing it expected to find.
 The exception *type* is the adapter's choice (§Error taxonomy leaves it
 unspecified in v0); the *message* is not optional.
 
+#### What identifies a refusal, since the type does not
+
+A host has to tell "this document was refused" from "something broke" — the
+two deserve different words in front of a person, and only one of them is the
+author's to fix. It cannot do that by inspecting the exception, because this
+document deliberately leaves the type open. So the identifier is **the call**:
+`prepare` is the door, and a throw from it is a verdict on the document as
+given. A host may act on that without unwrapping anything.
+
+That is a constraint on the adapter before it is a convenience for the host,
+and it has a second half. A refusal must leave the branch exactly as
+preparable as it found it — the check belongs before any staging mutation, so
+nothing is half-staged when the throw happens. Otherwise the identification is
+worthless in the case it exists for: the host tells the author "fix the
+document and try again", and the retry lands on a branch the first attempt
+already spoiled. `§3/refusal-leaves-branch-preparable` in the conformance kit
+checks this by re-preparing a document known to be good after a refusal.
+
+The bound is worth stating plainly, because it is the price of leaving the
+type open: a fault *inside* `prepare` that has nothing to do with the document
+will also be read as a refusal. Narrowing what `prepare` does is what keeps
+that window small — it checks the document and stages it, and it is not the
+place to do anything else.
+
 ## 4. Fidelity declaration (minimum schema)
 
 Per branch, machine-readable:
@@ -177,6 +201,9 @@ Design points that landed during implementation:
   adapter failures during branch/prepare are retryable-or-discardable (F1/F2);
   `FlipAsync` re-issued with a used token for a *different* state ref MUST
   throw — same token + same state ref is the idempotent recovery no-op.
+  Exception *types* stay unspecified, so what identifies a refusal of the
+  document is the call it came out of, not the exception — see §3, *What
+  identifies a refusal*.
 - **Unknown targets: throw, never invent.** `ActiveStateAsync` on a target the
   adapter does not know (state lost, partially restored, renamed) MUST throw.
   Returning a fabricated or empty `ActiveState` would let a *guess* reach the

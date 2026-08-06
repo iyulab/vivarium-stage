@@ -129,6 +129,31 @@ public class ConformanceTests
     }
 
     [Fact]
+    public async Task Refusing_correctly_but_spoiling_the_branch_fails()
+    {
+        // Since the exception type is the adapter's choice, the call is what
+        // identifies a refusal — and a host acting on that identification tells the
+        // author to fix the document and retry. This adapter refuses correctly, with
+        // a reason, every time; it simply cannot be prepared again afterwards, so the
+        // advice the identification enables goes nowhere.
+        var adapter = new SpoilsTheBranchOnRefusal(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        var check = report.Failures.Single(f => f.Id == ConformanceIds.RefusalLeavesBranchPreparable);
+        // This adapter's residue makes the retry throw outright; a different one
+        // would report a changed completion instead. Both are the same violation and
+        // the check names which of the two it saw.
+        Assert.Contains("did not survive being refused", check.Detail);
+
+        // The refusal clauses themselves stay green — that is what makes this check
+        // load-bearing rather than a second spelling of the ones above.
+        Assert.DoesNotContain(report.Failures, f => f.Id == ConformanceIds.PrepareRefusesMalformedDataOp);
+        Assert.DoesNotContain(report.Failures, f => f.Id == ConformanceIds.PrepareRefusesMalformedSchemaOp);
+        Assert.DoesNotContain(report.Failures, f => f.Id == ConformanceIds.PrepareRefusesAbsentSchemaTarget);
+    }
+
+    [Fact]
     public async Task Faulting_on_a_malformed_data_operation_fails_too()
     {
         // Throwing is necessary but not sufficient — a null-reference fault is an
@@ -330,6 +355,28 @@ public class ConformanceTests
                     ["schema"] = true, ["ui"] = true, ["data"] = true,
                 });
             return await Inner.PrepareAsync(branchRef, facets, ct);
+        }
+    }
+
+    /// <summary>
+    /// An adapter that starts staging before it finishes checking: the refusal is
+    /// correct and carries a reason, but it leaves residue, so the branch never
+    /// prepares again. Every refusal check still passes — which is the point. A
+    /// contract that only asks "did it refuse?" cannot see this, and a host acting
+    /// on the refusal sends the author back to a branch the first attempt spoiled.
+    /// </summary>
+    private sealed class SpoilsTheBranchOnRefusal(IBackendAdapter inner) : Passthrough(inner)
+    {
+        private readonly HashSet<string> spoiled = [];
+
+        public override async Task<PrepareReport> PrepareAsync(
+            string branchRef, PreparedFacets facets, CancellationToken ct = default)
+        {
+            if (spoiled.Contains(branchRef))
+                throw new InvalidOperationException(
+                    "the branch is half-staged from an earlier refusal and cannot be prepared again");
+            try { return await Inner.PrepareAsync(branchRef, facets, ct); }
+            catch (InvalidOperationException) { spoiled.Add(branchRef); throw; }
         }
     }
 

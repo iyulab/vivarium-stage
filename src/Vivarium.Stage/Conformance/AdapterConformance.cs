@@ -32,6 +32,7 @@ public static class ConformanceIds
     public const string PrepareRefusesMalformedDataOp = "adapter-api §3/prepare-refuses-malformed-data-operation";
     public const string PrepareRefusesMalformedSchemaOp = "adapter-api §3/prepare-refuses-malformed-schema-operation";
     public const string PrepareRefusesAbsentSchemaTarget = "adapter-api §3/prepare-refuses-absent-schema-target";
+    public const string RefusalLeavesBranchPreparable = "adapter-api §3/refusal-leaves-branch-preparable";
     public const string ActiveStateReturnsRefAndFingerprints = "adapter-api §3/active-state-returns-ref-and-fingerprints";
     public const string ActiveStateDeterministic = "adapter-api §3/active-state-deterministic";
     public const string UnknownTargetThrows = "adapter-api §Error-taxonomy/unknown-target-throws";
@@ -429,6 +430,29 @@ public static class AdapterConformance
                     ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle,
                     ConformanceOutcome.Passed,
                     "verified at the entity level only — the suite cannot name a field or constraint the fixture is known to lack"));
+        }
+
+        // Three refusals just happened on this branch. Because the exception type is
+        // the adapter's choice, the only thing that identifies a refusal is the call
+        // it came out of — and a host acting on that identification tells the author
+        // to fix the document and retry. That advice is worthless if the refused
+        // attempt already spoiled the branch, so the guarantee has to be checked and
+        // not merely stated: a good document must still prepare, identically.
+        const string preparableTitle = "a refusal leaves the branch as preparable as it was";
+        try
+        {
+            var afterRefusals = await adapter.PrepareAsync(branch.BranchRef, facets, ct);
+            if (!SameCompletion(report, afterRefusals))
+                Fail(ConformanceIds.RefusalLeavesBranchPreparable, preparableTitle,
+                    "a document that prepared cleanly before the refusals reported a different completion after them — the refused attempts left the branch changed, so 'fix it and try again' lands somewhere the first attempt already spoiled");
+            else
+                Pass(ConformanceIds.RefusalLeavesBranchPreparable, preparableTitle);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e)
+        {
+            Fail(ConformanceIds.RefusalLeavesBranchPreparable, preparableTitle,
+                $"a document that prepared cleanly before the refusals now throws — the branch did not survive being refused: {e.Message}");
         }
 
         const string prepareLiveTitle = "prepare has no live effect";
