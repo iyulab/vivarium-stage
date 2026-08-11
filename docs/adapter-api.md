@@ -194,6 +194,15 @@ Design points that landed during implementation:
   "did the UI facet move?" reads the artifact entries it cares about rather than
   looking for a `ui` key. The fidelity declaration (§4) *is* keyed by facet name —
   the two serve different questions and their key sets are deliberately different.
+  The same freedom applies to `schema` and `data`: nothing in this contract ties
+  their refs to the facet name either. An adapter that can compute a
+  deterministic fingerprint below facet granularity — per entity, say — MAY key
+  its `FacetFingerprints` entries that way, exactly as the UI case does, and a
+  changeset author who declares `baseState` at that same granularity narrows its
+  own drift exposure accordingly. The reference in-memory adapter keeps `schema`
+  and `data` at whole-facet granularity today (the changeset spec's Open item
+  on finer data units is unresolved), but that is the reference adapter's
+  choice, not a ceiling this contract imposes.
 - **Refs are opaque strings.** A branch ref doubles as a state ref once
   flipped (a branch *is* the thing that graduates to an apply). The first
   adapter binds them to backend project ids; the in-memory adapter to world keys.
