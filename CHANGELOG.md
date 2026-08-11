@@ -6,6 +6,223 @@ versioning: 0.x — minor for surface changes, patch for fixes. Stage versions
 independently of the changeset spec: it consumes the contract, it does not
 define it.
 
+## 0.6.0 — 2026-08-11
+
+**Binary breaking (2)**: `ApplyAsync`/`RollbackAsync` return `Task<FlipOutcome>`
+instead of `Task`, and `StageRecovery.RecoverAsync` returns `Task<RecoveryReport>`
+instead of `Task<IReadOnlyList<RecoveryOutcome>>`. Both are noted again inline
+below, where the reasoning lives.
+
+### Added
+- **The adapter contract says what identifies a refusal, since the type does not.**
+  A host has to tell "this document was refused" from "something broke" — different
+  words belong in front of a person, and only one of the two is the author's to fix.
+  The contract leaves the exception type to the adapter, so the identifier is the
+  call: `prepare` is the door, and a throw from it is a verdict on the document as
+  given. That was already implied and nowhere stated, which left every host to
+  re-derive it. The clause states it, and adds the half that makes it actionable —
+  a refusal must leave the branch as preparable as it found it, or "fix the document
+  and try again" lands on a branch the first attempt already spoiled. The conformance
+  suite gains `§3/refusal-leaves-branch-preparable` (23rd clause), which re-prepares
+  a known-good document after a refusal. An adapter that refuses correctly every
+  time but stages before it finishes checking now fails it while every refusal clause
+  stays green — the shape the new check exists for.
+- **The ledger can say whether its own history was rewritten.** Fixed principle 6 —
+  history is never rewritten — was a policy the library followed without being one it
+  could detect the violation of: entries carried no binding to the entry before them,
+  so a store that edited its own file was invisible to every reader. Each entry now
+  carries its own hash and the hash of the one before it, computed with the same JCS
+  canonicalization and `sha256:` prefix this family already uses to seal changesets.
+
+  ```csharp
+  var integrity = LedgerIntegrity.Verify(ReleaseLedger.ParseExport(export));
+  if (integrity.Verdict == "broken")
+      foreach (var finding in integrity.Findings)
+          Console.WriteLine($"seq {finding.Seq}: {finding.Message}");
+  ```
+
+  Verification takes entries rather than a ledger, because an audit is someone holding
+  the exported file with no live store in hand. Three verdicts, and the third earns its
+  place: `unverifiable` means no entry carries a chain, so nothing was checked —
+  collapsing it into `intact` would let "green" mean either *verified* or *nobody
+  looked*. `UnverifiedPrefix` counts the entries the check could not speak for.
+
+  **No migration.** History written before the chain parses as before and reports
+  itself as an unverified prefix. It is deliberately not re-hashed on import: doing so
+  would assert that history was never altered rather than verify it, which is the
+  distinction `RehydrateAppliedAsync` has always kept.
+
+  **What it does not catch, stated where the check is**: dropping the newest entries.
+  A shorter history is self-consistent, and appending afterwards closes over the gap
+  rather than exposing it. Detecting that needs a fixed point held where the store
+  cannot reach it, which this version does not have. Every other edit — in place, from
+  the middle, from the head, inserted, reordered — becomes visible, and a convincing
+  forgery costs the whole ledger from the tampered entry onward rather than one line.
+
+- **An operator can close what recovery would not guess.** `unresolved` means recovery
+  appended nothing and the pending entry stands. Getting past that point previously
+  meant hand-writing entries into an append-only trail — which admits a completion for
+  a target with nothing in flight, under a token no entry carries, naming a state that
+  was never staged, permanently. `StageRecovery.ResolveAsync` admits only a resolution
+  the pending entry can take and reads the token and state refs from that entry rather
+  than from the caller.
+
+  The outcome's reason is `operator-declared`, kept apart from the four an active state
+  supports: a resolution asserted by a person and one verified against live state are
+  not the same claim, and an audit that cannot tell them apart is worth less than one
+  that can. The actor the library writes on entries it reconciled itself is reserved,
+  so an assertion cannot be read back later as a verification.
+
+- **`StagePolicy.RequireIntactLedger`** — refuse to recover from a ledger that does not
+  verify, instead of reporting the verdict and continuing. Off by default: a damaged
+  ledger is when a host may most need to recover, so refusing by default would take the
+  recovery path down with the check. Only a `broken` verdict refuses; `unverifiable`
+  does not, or the switch would be unusable for deployments that have a past. The
+  refusal carries `RefusalReason.LedgerIntegrityGate` and the findings in `Details` —
+  its own reason because the response is unlike the others here: they are answered by
+  changing the changeset or the target, this one by going to look at the store.
+
+- **Refusals carry the facts, not just the verdict.** `StageRefusedException` gains
+  `Details`, a `JsonObject?` snapshot of what the refusing gate observed. `Reason`
+  already said *which gate*; the specifics — the mismatched ref, the fingerprint the
+  changeset was authored against, the one that is live now — existed only inside
+  `Message`, so a host that wanted to offer "re-base this" had to parse an English
+  sentence to find them.
+
+  ```csharp
+  catch (StageRefusedException refusal) when (refusal.Reason == RefusalReason.DriftGate)
+  {
+      var which = refusal.Details?["ref"]?.GetValue<string>();
+      var expected = refusal.Details?["expected"]?.GetValue<string>();
+      var actual = refusal.Details?["actual"]?.GetValue<string>();  // null when the ref is absent
+  }
+  ```
+
+  Populated where a caller can act on the difference — the drift gate (base-state and
+  active-state), the spec-validation refusal (which keeps the validator's per-error
+  `path`/`message` instead of flattening them into one string), prepare-incompleteness
+  (the facet names), and state-transition refusals (the expected and actual state). It is
+  deliberately **`null`** elsewhere: the fingerprint gate refuses a fingerprint the caller
+  just submitted, and echoing it back informs nobody. A payload on every refusal would be
+  a bigger surface that says less.
+
+  Members are per-gate and additive — read the ones you know, ignore the rest. Adding a
+  member is not a breaking change; removing one is. `Message` remains the human sentence
+  and the only place a detail is guaranteed to appear.
+
+  Additive: existing `catch` blocks and `Reason` branches are unaffected.
+
+- **`ApplyAsync` and `RollbackAsync` return what they landed** — a `FlipOutcome`
+  carrying the operation (`apply` | `rollback`), target, changeset fingerprint, apply
+  token, and both ends of the flip. These are the facts the methods already wrote to
+  the ledger and then discarded.
+
+  Callers had to reconstruct them, and the usual reconstruction — read the active
+  state back after the call — answers a different question. "What did my apply land?"
+  and "what is active now?" diverge the moment another flip lands between the two,
+  and the caller then reports someone else's state as its own. The outcome is a record
+  of the past, so it does not go stale; ask the adapter when you need to know what is
+  live. `RehydrateAppliedAsync` still verifies rather than asserts — nothing about
+  that discipline changes, because a past fact is not a claim about the present.
+
+  Properties are init-only, not positional: this type will grow as more of what the
+  ledger knows becomes useful, and positional records break deconstruction on every
+  addition (0.3.0 and 0.4.0 both did).
+
+  **Binary breaking**: `Task` → `Task<FlipOutcome>`. Source-compatible for callers
+  that ignore the result, but recompilation is required, and method-group conversions
+  or overrides of these signatures need updating.
+
+- **The drift gate reports every drifted ref, not just the first.** It refused at the
+  first violation, so an author re-basing a proposal with three stale refs learned
+  about them one apply at a time. `Details.drifted` is now an array of
+  `{ kind, ref, expected, actual }` — `actual` is `null` where the ref is absent from
+  the live target rather than merely different — and the message lists all of them.
+
+### Changed
+- **Recovery reports what it made of the ledger it read.** `StageRecovery.RecoverAsync`
+  returns a `RecoveryReport` — the integrity verdict plus the per-target outcomes —
+  rather than the outcomes alone. The verdict rides on the sweep rather than on each
+  outcome because of the quiet case: a ledger can be tampered with and still leave
+  nothing in flight, and a per-outcome verdict would vanish exactly where an operator
+  most needs it.
+
+  **Binary breaking**: `Task<IReadOnlyList<RecoveryOutcome>>` → `Task<RecoveryReport>`.
+  Call sites read `.Outcomes`; the outcome type itself is unchanged.
+
+- **The reference adapter validates the data operations it is handed.** `prepare`
+  receives a document authored elsewhere; it now checks every data operation before
+  staging anything and refuses one it cannot execute honestly, naming what is wrong
+  and where. Three failure modes are gone, and the loudest was not the worst:
+
+  - dereferencing an absent member on a predicate that was not `{ field, equals }`
+    produced a null-reference fault — a fault is not a reason;
+  - an operation outside the vocabulary fell through the dispatch and did nothing,
+    while `prepare` reported the data facet complete — completion reported for work
+    that did not happen;
+  - a missing predicate was treated as "match every row", so a delete that lost its
+    `where` would have staged the removal of everything.
+
+  The check is total and runs before any mutation, so a refused document leaves the
+  branch untouched rather than half-staged. The reference adapter is what adapter
+  authors copy, so each of these was on its way into every real backend.
+
+- **adapter-api §3 gains a normative clause** — *Data operations: the adapter
+  validates its own input* — stating that the upstream validator is not a substitute
+  and that the exception type is the adapter's choice while the message is not
+  optional.
+
+  The rule covers **all three facets**, not only data. The changeset validator does
+  constrain schema and UI patches, but `prepare` is public API — a host can call it
+  without ever building a `ChangeSession` — so "the validator checked it" is not a
+  property the operation gets to assume. Two silent-wrong-result paths went with it:
+  a schema operation outside the vocabulary fell through its dispatch (staging
+  nothing, reporting the facet complete), and renaming or retyping a field the entity
+  does not have wrote an empty declaration under the new name — a field no later read
+  tells apart from a real one. Both now refuse, naming what was expected and where.
+
+- **The conformance suite checks it** (19 → 21 clauses):
+  `adapter-api §3/prepare-refuses-malformed-data-operation` feeds a predicate written
+  as a key/value map — the shape a producer reaches for first — and
+  `…/prepare-refuses-malformed-schema-operation` feeds an operation outside the
+  vocabulary. Neither requires a particular exception type, but both fail a
+  `NullReferenceException` and an empty message.
+
+- **`ActiveState.FacetFingerprints` key vocabulary is now documented** as drift-gate
+  refs rather than facet names: one entry for `schema`, one for `data`, and **one per
+  UI artifact** — because UI drift is per-artifact, and editing one screen must not
+  refuse a proposal that touches another. The fidelity declaration (§4) is keyed by
+  facet name; the two answer different questions and their key sets differ on purpose.
+  The same freedom applies to `schema` and `data`: an adapter that can compute a
+  deterministic fingerprint below facet granularity may key those facets' entries that
+  way too — the reference adapter's current whole-facet granularity is its own choice,
+  not a ceiling the contract imposes.
+
+### Fixed
+- **Removing something that was never there is refused rather than reported as done.**
+  The adapter contract requires refusing a well-formed operation whose target does not
+  exist, and the reference adapter applied that to renaming and retyping a field —
+  where an invented target is visible in the world afterwards — but not to removing an
+  entity, a field, or a constraint. Removal is where a quiet success is most
+  convincing, because the target is supposed to end up absent either way. A document
+  saying a field would be dropped could name a field nobody had, stage nothing, flip,
+  and be recorded in the ledger as applied: a reviewer approved a sentence that never
+  became true. Constraint removal was the easiest of the three to miss — a constraint
+  is addressed by its whole shape rather than by a name, so "remove the ones that
+  match" reads like a filter.
+
+  A data operation whose `where` selects no rows is deliberately unaffected: a
+  predicate that matches nothing has done what it said. The distinction the contract
+  now states is whether the document **named** a thing it expected to find.
+
+  The conformance suite gains `…/prepare-refuses-absent-schema-target`, so the rule is
+  a property of the contract rather than of one implementation — an adapter can no
+  longer skip it and pass. The check states the part it cannot reach: its probe
+  addresses an entity, the only absent target the suite can name without knowing the
+  fixture's schema. **Adapter authors: an implementation that accepted removals of
+  absent targets now fails conformance.** No API change; behaviour change on three
+  paths that previously succeeded silently.
+
 ## 0.5.0 — 2026-08-03
 
 ### Added — an executable conformance suite for backend adapters
