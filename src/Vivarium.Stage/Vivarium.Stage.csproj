@@ -1,14 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <PackageReference Include="Vivarium.Changeset" Version="0.2.0" />
+    <PackageReference Include="Vivarium.Changeset" Version="0.3.0" />
   </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.6.0</Version>
+    <Version>0.7.0</Version>
     <Description>Changeset lifecycle core: the branch → simulate → apply → rollback state machine, fingerprint gate with drift refusal, append-only release ledger, and the backend adapter boundary with an executable conformance suite. Hosting-neutral library.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/iyulab/vivarium-stage</RepositoryUrl>

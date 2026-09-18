@@ -36,19 +36,24 @@ public sealed class TestWorld
             """)!);
     }
 
-    /// <summary>Build a valid changeset whose baseState matches the live target, finalize, and approve it.</summary>
-    public async Task<JsonObject> ApprovedChangesetAsync(bool approved = true)
+    /// <summary>
+    /// Build a valid changeset whose baseState matches the live target, finalize, and approve it.
+    /// <paramref name="declareData"/> also declares the data facet it patches (spec 0.3 <c>data</c> kind).
+    /// </summary>
+    public async Task<JsonObject> ApprovedChangesetAsync(bool approved = true, bool declareData = false)
     {
         var active = await Inner.ActiveStateAsync(TargetName);
+        List<BaseStateEntry> baseState =
+        [
+            new BaseStateEntry("schema", "schema", active.FacetFingerprints["schema"]),
+            new BaseStateEntry("ui-artifact", "screen-loans", active.FacetFingerprints["screen-loans"]),
+        ];
+        if (declareData) baseState.Add(new BaseStateEntry("data", "data", active.FacetFingerprints["data"]));
         var doc = new ChangesetBuilder(
                 intent: "Add a due-date to the loan screen",
                 producedBy: "test-suite",
                 createdAt: "2026-07-16T00:00:00Z",
-                baseState:
-                [
-                    new BaseStateEntry("schema", "schema", active.FacetFingerprints["schema"]),
-                    new BaseStateEntry("ui-artifact", "screen-loans", active.FacetFingerprints["screen-loans"]),
-                ])
+                baseState: baseState)
             .AddSchemaOp((JsonObject)JsonNode.Parse("""
                 { "op": "field.add", "entity": "loan",
                   "field": { "name": "dueDate", "type": "date" },

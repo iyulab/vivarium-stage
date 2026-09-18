@@ -49,6 +49,42 @@ public class GateTests
         Assert.Empty(await world.Ledger.ReadAllAsync()); // refused before write-ahead
     }
 
+    /// <summary>
+    /// Spec 0.3 gives the data facet a base-state kind of its own. Without it a data
+    /// change under a pending proposal was invisible to the gate: the proposal could
+    /// only declare the schema and UI it was authored against.
+    /// </summary>
+    [Fact]
+    public async Task DeclaredDataBaseIsAdmittedAndApplies()
+    {
+        var world = new TestWorld();
+        var doc = await world.ApprovedChangesetAsync(declareData: true);
+        Assert.Equal("0.3.0", doc["specVersion"]!.GetValue<string>()); // builder lifted it
+
+        var session = await world.SimulatedSessionAsync(doc);
+        await session.ApplyAsync("operator-1");
+
+        Assert.Equal(SessionState.Applied, session.State);
+    }
+
+    [Fact]
+    public async Task DriftedDataFacetIsRefusedWhenDeclared()
+    {
+        var world = new TestWorld();
+        var session = await world.SimulatedSessionAsync(await world.ApprovedChangesetAsync(declareData: true));
+
+        // the row the proposal's data patch selects is gone; schema and UI are untouched
+        world.Inner.MutateLiveOutOfBand(TestWorld.TargetName, w =>
+            ((JsonObject)w["data"]!)["loan"] = new JsonArray());
+
+        var ex = await Assert.ThrowsAsync<StageRefusedException>(() => session.ApplyAsync("operator-1"));
+        Assert.Equal(RefusalReason.DriftGate, ex.Reason);
+        var drifted = Assert.Single((JsonArray)ex.Details!["drifted"]!);
+        Assert.Equal("data", drifted!["kind"]!.GetValue<string>());
+        Assert.Equal("data", drifted["ref"]!.GetValue<string>());
+        Assert.Empty(await world.Ledger.ReadAllAsync()); // refused before write-ahead
+    }
+
     [Fact]
     public async Task MissingBaseStateRefIsRefused()
     {

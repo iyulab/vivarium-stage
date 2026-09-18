@@ -59,7 +59,9 @@ matter:
 
 - **`baseState` pins what the change was written against** — facet
   fingerprints taken from the live target. The drift gate compares these at
-  apply time.
+  apply time, and it checks **only what is declared**: a changeset that patches
+  data should declare a `data` entry (changeset spec 0.3), or rows can change
+  under it unnoticed.
 - **An approval is bound to the exact fingerprint.** Approving "the idea of
   the change" is not a thing; the record names the bytes.
 
