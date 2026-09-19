@@ -6,6 +6,23 @@ versioning: 0.x — minor for surface changes, patch for fixes. Stage versions
 independently of the changeset spec: it consumes the contract, it does not
 define it.
 
+## 0.7.0 — 2026-09-19
+
+### Changed
+- **Accepts changeset spec 0.3.0 documents**, including the `data` base-state kind. The drift gate
+  already compared every declared entry generically; what was missing was admission — a document
+  declaring the data facet it patches was refused as an unsupported spec version before any gate ran.
+  A changeset that declares `data` is now refused with `DriftGate` when the live rows moved under it,
+  like any other declared facet. Depends on `Vivarium.Changeset` 0.3.0 (was 0.2.0).
+
+### Docs
+- Getting started notes that the drift gate checks only what is declared, and that a changeset
+  patching data should declare a `data` entry.
+
+### CI
+- **Publish workflow** is rerun-safe and its registry check is conclusive: `dotnet nuget push --skip-duplicate`, and an
+  exhausted verification window fails with the reason instead of falling through to a restore error.
+
 ## 0.6.0 — 2026-08-11
 
 **Binary breaking (2)**: `ApplyAsync`/`RollbackAsync` return `Task<FlipOutcome>`
