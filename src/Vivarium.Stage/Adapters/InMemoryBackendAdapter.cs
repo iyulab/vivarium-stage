@@ -33,7 +33,20 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             ["ui"] = ["full"],
         });
 
-    /// <summary>Create a target with an initial live world. World shape: { schema: { entities: {} }, data: {}, artifacts: {} }.</summary>
+    /// <summary>
+    /// Create a target with an initial live world. World shape:
+    /// { schema: { entities: {} }, data: {}, artifacts: {} }.
+    /// <para>A supplied world must carry that whole shape. Every read path downstream —
+    /// <see cref="ActiveStateAsync"/> fingerprinting each facet, patch application walking
+    /// <c>schema.entities</c> — addresses those containers directly, so a world missing one
+    /// does not fail here, it fails later inside a method the caller never named. The seed
+    /// is the last point at which the caller still holds the wrong input, so that is where
+    /// it is refused, naming every key at once rather than one per round-trip.</para>
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="initialWorld"/> is missing a required container, or one of them is
+    /// not a JSON object.
+    /// </exception>
     public void SeedTarget(string target, JsonObject? initialWorld = null)
     {
         var world = initialWorld is null
@@ -44,11 +57,40 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 ["artifacts"] = new JsonObject(),
             }
             : (JsonObject)initialWorld.DeepClone();
+        if (initialWorld is not null)
+            RequireWorldShape(world);
         // state refs are globally unique — branches use a global counter, and
         // the seed state embeds the target name (WorldCanonical resolves by ref alone)
         var liveRef = $"live-{target}";
         lock (_lock)
             _targets[target] = new TargetWorld { States = new() { [liveRef] = world }, ActiveRef = liveRef };
+    }
+
+    /// <summary>
+    /// The documented world shape, checked rather than assumed. Collects every problem
+    /// before throwing: a caller fixing one missing container at a time learns the shape
+    /// one crash at a time, which is the failure this refusal exists to end.
+    /// </summary>
+    private static void RequireWorldShape(JsonObject world)
+    {
+        List<string> problems = [];
+        foreach (var key in (string[])["schema", "data", "artifacts"])
+        {
+            if (!world.ContainsKey(key))
+                problems.Add($"'{key}' is missing");
+            else if (world[key] is not JsonObject)
+                problems.Add($"'{key}' must be an object");
+        }
+        // schema carries its entities map; patch application addresses it directly.
+        if (world["schema"] is JsonObject schema && schema["entities"] is not JsonObject)
+            problems.Add(schema.ContainsKey("entities")
+                ? "'schema.entities' must be an object"
+                : "'schema.entities' is missing");
+        if (problems.Count > 0)
+            throw new ArgumentException(
+                $"seeded world does not carry the shape this adapter reads back: {string.Join("; ", problems)}. " +
+                "Expected { schema: { entities: {} }, data: {}, artifacts: {} } — domain contents go inside those.",
+                "initialWorld");
     }
 
     /// <summary>Canonical JSON of the active world — lets tests assert "old or new, never mixed" byte-for-byte.</summary>

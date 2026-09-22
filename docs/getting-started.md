@@ -420,6 +420,8 @@ a flip token:
 using Vivarium.Stage.Conformance;
 
 var fixtureAdapter = new InMemoryBackendAdapter();   // swap in your own adapter
+// The reference adapter reads back the three containers below, so it requires all of
+// them; a world missing one is refused here, where the seed is still yours to fix.
 fixtureAdapter.SeedTarget("fixture-app", new JsonObject
 {
     ["schema"] = new JsonObject { ["entities"] = new JsonObject() },
@@ -434,11 +436,15 @@ var conformance = await AdapterConformance.RunAsync(
         UnknownTarget: "no-such-target",
         Patches: new JsonObject
         {
-            ["uiPatches"] = new JsonArray(new JsonObject
+            // Facet keys are the changeset's own: "schema", "ui", "data". A key the
+            // adapter does not read stages nothing, and the prepare checks then report
+            // on the fixture instead of on your adapter.
+            ["ui"] = new JsonArray(new JsonObject
             {
                 ["artifactId"] = "screen-main",
                 ["profile"] = "whole-artifact@0",
                 ["newContent"] = "export default function mount(root) { root.textContent = 'ok'; }",
+                ["explanation"] = "Conformance fixture patch.",
             }),
         }));
 
