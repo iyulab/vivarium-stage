@@ -257,17 +257,57 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             foreach (var (op, i) in (dataPatches[p]["operations"] as JsonArray ?? []).Select((o, i) => (o, i)))
                 RequireWellFormedDataOp(op, $"patches.data[{p}].operations[{i}]");
 
-        foreach (var op in (patches["schema"] as JsonArray ?? []).OfType<JsonObject>())
-            ApplySchemaOp((JsonObject)world["schema"]!["entities"]!, op);
+        // Spec §5.4 — expand, then move the values, then contract. Adding first is what
+        // lets one document create an entity and populate it; removing last is what lets
+        // its data operations still read and rewrite the rows of a field on its way out.
+        // Applying every schema operation up front (which this did through 0.7.x) makes
+        // the second of those unexpressible, and leaves a cleared-then-removed field
+        // behind as a member no schema declares.
+        var schemaOps = (patches["schema"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+        var entities = (JsonObject)world["schema"]!["entities"]!;
+
+        foreach (var op in schemaOps.Where(o => !IsRemoval(o)))
+            ApplySchemaOp(entities, op);
+
+        // UI patches address artifacts, not rows — nothing observable depends on where
+        // they fall, so they keep their place between the two schema phases.
         foreach (var patch in (patches["ui"] as JsonArray ?? []).OfType<JsonObject>())
         {
             var artifacts = (JsonObject)world["artifacts"]!;
             var artifactId = patch["artifactId"]!.GetValue<string>();
             artifacts[artifactId] = ResolveUiContent(artifacts, artifactId, patch);
         }
+
         foreach (var patch in (patches["data"] as JsonArray ?? []).OfType<JsonObject>())
             foreach (var op in (patch["operations"] as JsonArray ?? []).OfType<JsonObject>())
                 ApplyDataOp((JsonObject)world["data"]!, op);
+
+        foreach (var op in schemaOps.Where(IsRemoval))
+        {
+            ApplySchemaOp(entities, op);
+            // §5.4: a removal carries away the values stored under what it removes.
+            // Dropping the declaration alone would leave rows holding members nothing
+            // in the schema explains — and nothing in the operation vocabulary can
+            // address afterwards, since every op names a declared field.
+            DropRemovedValues((JsonObject)world["data"]!, op);
+        }
+    }
+
+    private static bool IsRemoval(JsonObject op) =>
+        op["op"]?.GetValue<string>() is "field.remove" or "entity.remove";
+
+    private static void DropRemovedValues(JsonObject data, JsonObject op)
+    {
+        var entity = op["entity"]!.GetValue<string>();
+        if (op["op"]!.GetValue<string>() == "entity.remove")
+        {
+            data.Remove(entity);
+            return;
+        }
+        if (data[entity] is not JsonArray rows) return;
+        var field = op["field"]!.GetValue<string>();
+        foreach (var row in rows.OfType<JsonObject>())
+            row.Remove(field);
     }
 
     /// <summary>
