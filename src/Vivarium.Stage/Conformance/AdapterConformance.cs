@@ -105,7 +105,57 @@ public sealed record ConformanceFixture(
     string KnownTarget,
     string UnknownTarget,
     System.Text.Json.Nodes.JsonObject Patches,
-    string TokenPrefix = "conformance");
+    string TokenPrefix = "conformance")
+{
+    /// <summary>The facet keys a changeset's <c>patches</c> object may carry (spec §5).</summary>
+    private static readonly string[] FacetKeys = ["schema", "ui", "data"];
+
+    /// <summary>
+    /// The facets <see cref="Patches"/> actually carries content for, in a stable order —
+    /// what the prepare checks are able to speak for, and nothing more.
+    /// </summary>
+    public IReadOnlyList<string> ExercisedFacets { get; } = Validate(Patches);
+
+    /// <summary>
+    /// A patch set the adapter will not read is the one input that makes this suite lie:
+    /// prepare stages nothing, the adapter reports whatever it reports, and the run comes
+    /// back green about work that never happened. Nothing downstream can tell that apart
+    /// from a correct run, so it is refused here — the one place that still knows the key
+    /// was a typo rather than a decision.
+    /// </summary>
+    private static string[] Validate(System.Text.Json.Nodes.JsonObject patches)
+    {
+        ArgumentNullException.ThrowIfNull(patches);
+        List<string> problems = [];
+
+        var strays = patches.Select(kv => kv.Key).Where(k => !FacetKeys.Contains(k)).ToArray();
+        if (strays.Length > 0)
+            problems.Add($"[{string.Join(", ", strays)}] {(strays.Length == 1 ? "is not a facet" : "are not facets")}");
+
+        List<string> exercised = [];
+        foreach (var key in FacetKeys)
+        {
+            if (!patches.ContainsKey(key)) continue;
+            if (patches[key] is not System.Text.Json.Nodes.JsonArray array)
+            {
+                problems.Add($"'{key}' must be an array");
+                continue;
+            }
+            if (array.Count > 0) exercised.Add(key);
+        }
+
+        if (problems.Count == 0 && exercised.Count == 0)
+            problems.Add("every facet is absent or empty, so prepare would stage nothing");
+
+        if (problems.Count > 0)
+            throw new ArgumentException(
+                $"this patch set cannot exercise the adapter: {string.Join("; ", problems)}. " +
+                $"Expected a changeset's own facet keys — schema, ui, data — with at least one carrying a patch.",
+                nameof(Patches));
+
+        return [.. exercised];
+    }
+}
 
 /// <summary>
 /// Executable conformance suite for <see cref="IBackendAdapter"/>
@@ -278,12 +328,29 @@ public static class AdapterConformance
         var facets = new PreparedFacets(fingerprint, fixture.Patches);
         var report = await adapter.PrepareAsync(branch.BranchRef, facets, ct);
 
+        // Counting entries is not a check: an adapter that answers with a constant
+        // dictionary passes it while staging nothing, which is how this suite came to
+        // report the same verdict for a patch set the adapter read and one it did not.
+        // The fixture knows which facets the document carries, so the question worth
+        // asking is whether the report covers exactly those.
         const string prepareFacetTitle = "prepare reports per-facet completion";
+        var exercised = fixture.ExercisedFacets;
+        var reported = report.FacetComplete.Keys.ToArray();
+        var silent = exercised.Where(f => !reported.Contains(f)).ToArray();
+        var overclaimed = reported.Where(f => !exercised.Contains(f)).ToArray();
+        var coverageNote = $"the document carried [{string.Join(", ", exercised)}]";
         if (report.FacetComplete.Count == 0)
             Fail(ConformanceIds.PrepareReportsPerFacet, prepareFacetTitle,
                 "FacetComplete is empty — Stage cannot confirm ALL facets before a flip, which is what makes a half-applied change impossible");
+        else if (silent.Length > 0)
+            Fail(ConformanceIds.PrepareReportsPerFacet, prepareFacetTitle,
+                $"{coverageNote} but the report says nothing about [{string.Join(", ", silent)}] — Stage cannot confirm a facet the adapter never answered for");
+        else if (overclaimed.Length > 0)
+            Fail(ConformanceIds.PrepareReportsPerFacet, prepareFacetTitle,
+                $"{coverageNote} but the report also claims [{string.Join(", ", overclaimed)}] — reporting completion for a facet the document never carried is completion for work not done");
         else
-            Pass(ConformanceIds.PrepareReportsPerFacet, prepareFacetTitle);
+            checks.Add(new ConformanceCheck(ConformanceIds.PrepareReportsPerFacet, prepareFacetTitle,
+                ConformanceOutcome.Passed, coverageNote));
 
         const string prepareIdemTitle = "prepare is idempotent per changeset fingerprint";
         var second = await adapter.PrepareAsync(branch.BranchRef, facets, ct);

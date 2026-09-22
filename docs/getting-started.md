@@ -457,6 +457,12 @@ The suite reports rather than throws, needs no test framework, and marks a check
 `Skipped` where the contract genuinely does not constrain your adapter — it will
 not fail you for a case the boundary leaves open.
 
+`ConformanceFixture` refuses a patch set your adapter could not read — a key that is
+not a facet, or facets that are all empty. It has to: prepare would stage nothing, and
+the run would come back green about work that never happened, indistinguishable from a
+real pass. The prepare verdict also says which facets the document carried, and fails an
+adapter whose report covers more or fewer than those.
+
 ## Where to go next
 
 - [fault-model.md](fault-model.md) — the partial-failure matrix (F1–F6) and

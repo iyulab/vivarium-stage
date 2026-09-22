@@ -138,9 +138,7 @@ public class SeededWorldShapeTests
     /// <summary>
     /// The path a consumer actually walks: seed, then hand the adapter to the kit. The
     /// kit must reach a verdict rather than propagate an adapter exception — a suite
-    /// that cannot report on the reference adapter cannot report on anyone else's. The
-    /// fixture here carries one facet key only, which the kit's own docs call out as
-    /// reporting on the fixture rather than the adapter: that is a verdict, not a crash.
+    /// that cannot report on the reference adapter cannot report on anyone else's.
     /// </summary>
     [Fact]
     public async Task The_conformance_kit_reaches_a_verdict_on_a_minimally_seeded_adapter()
@@ -158,7 +156,16 @@ public class SeededWorldShapeTests
             new Vivarium.Stage.Conformance.ConformanceFixture(
                 KnownTarget: "known",
                 UnknownTarget: "nope",
-                Patches: new JsonObject { ["ui"] = new JsonArray() },
+                Patches: new JsonObject
+                {
+                    ["ui"] = new JsonArray(new JsonObject
+                    {
+                        ["artifactId"] = "screen-main",
+                        ["profile"] = "whole-artifact@0",
+                        ["newContent"] = "export default function mount(root) { root.textContent = 'probe'; }",
+                        ["explanation"] = "Conformance fixture patch.",
+                    }),
+                },
                 TokenPrefix: "probe"));
 
         Assert.NotEmpty(report.Checks);

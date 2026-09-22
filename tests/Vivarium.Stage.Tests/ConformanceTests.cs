@@ -11,13 +11,18 @@ namespace Vivarium.Stage.Tests;
 /// </summary>
 public class ConformanceTests
 {
+    // The facet key is the changeset's own: "ui". This helper carried "uiPatches" until
+    // 2026-09, which the adapter never reads — so every prepare check in this file ran
+    // against a document that staged nothing, and passed. That is the exact silence the
+    // fixture now refuses at construction.
     private static JsonObject Patches() => new()
     {
-        ["uiPatches"] = new JsonArray(new JsonObject
+        ["ui"] = new JsonArray(new JsonObject
         {
             ["artifactId"] = "screen-main",
             ["profile"] = "whole-artifact@0",
             ["newContent"] = "export default function mount(root) { root.textContent = 'Conformance'; }",
+            ["explanation"] = "Conformance fixture patch.",
         }),
     };
 

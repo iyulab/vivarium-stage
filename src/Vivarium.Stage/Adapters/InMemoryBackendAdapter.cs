@@ -163,10 +163,13 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 ApplyPatches(world.States[branchRef], facets.Patches);
                 prepared.Add(facets.ChangesetFingerprint); // idempotent per changeset fingerprint
             }
-            return Task.FromResult(new PrepareReport(new Dictionary<string, bool>
-            {
-                ["schema"] = true, ["ui"] = true, ["data"] = true,
-            }));
+            // Report the facets this document actually carried, not a constant. A
+            // constant answers "complete" for a facet the changeset never mentioned,
+            // which is the same completion-for-work-not-done this adapter refuses
+            // elsewhere — and, because it is the executable specification of the
+            // contract, an adapter author copying it would inherit the habit.
+            return Task.FromResult(new PrepareReport(
+                FacetsCarriedBy(facets.Patches).ToDictionary(f => f, _ => true)));
         }
     }
 
@@ -220,6 +223,14 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             return Task.CompletedTask;
         }
     }
+
+    /// <summary>
+    /// Which facets a prepared document carries — an empty array counts as not carried,
+    /// because a facet with no patches is not work this prepare completed.
+    /// </summary>
+    private static IEnumerable<string> FacetsCarriedBy(JsonObject patches) =>
+        ((string[])["schema", "ui", "data"])
+            .Where(key => patches[key] is JsonArray { Count: > 0 });
 
     private static string FingerprintOf(JsonNode? node) =>
         ChangesetFingerprint.OfArtifact(JsonCanonicalizer.Canonicalize(node?.ToJsonString() ?? "null"));
