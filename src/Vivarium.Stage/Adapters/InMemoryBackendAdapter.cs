@@ -35,17 +35,23 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
 
     /// <summary>
     /// Create a target with an initial live world. World shape:
-    /// { schema: { entities: {} }, data: {}, artifacts: {} }.
-    /// <para>A supplied world must carry that whole shape. Every read path downstream —
+    /// { schema: { entities: { "&lt;entity&gt;": { fields: {}, constraints: [] } } },
+    ///   data: { "&lt;entity&gt;": [] }, artifacts: {} }.
+    /// <para>A supplied world must carry that whole shape, <em>including the inner shape of
+    /// each entity and of each data container</em>. Every read path downstream —
     /// <see cref="ActiveStateAsync"/> fingerprinting each facet, patch application walking
-    /// <c>schema.entities</c> — addresses those containers directly, so a world missing one
+    /// <c>schema.entities.&lt;entity&gt;.fields</c> / <c>.constraints</c> and the row array at
+    /// <c>data.&lt;entity&gt;</c> — addresses those containers directly, so a world missing one
     /// does not fail here, it fails later inside a method the caller never named. The seed
     /// is the last point at which the caller still holds the wrong input, so that is where
-    /// it is refused, naming every key at once rather than one per round-trip.</para>
+    /// it is refused, naming every problem at once rather than one per round-trip.</para>
+    /// <para>The entity shape is not a convention: <c>entity.create</c> writes exactly
+    /// <c>{ fields: {}, constraints: [] }</c> and nothing else ever produces an entity, so a
+    /// seeded one that differs is a world the adapter cannot have built itself.</para>
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// <paramref name="initialWorld"/> is missing a required container, or one of them is
-    /// not a JSON object.
+    /// <paramref name="initialWorld"/> is missing a required container, one of them is not
+    /// the JSON type the adapter reads back, or an entity or data container inside them is.
     /// </exception>
     public void SeedTarget(string target, JsonObject? initialWorld = null)
     {
@@ -82,14 +88,63 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 problems.Add($"'{key}' must be an object");
         }
         // schema carries its entities map; patch application addresses it directly.
-        if (world["schema"] is JsonObject schema && schema["entities"] is not JsonObject)
-            problems.Add(schema.ContainsKey("entities")
-                ? "'schema.entities' must be an object"
-                : "'schema.entities' is missing");
+        if (world["schema"] is JsonObject schema)
+        {
+            if (schema["entities"] is not JsonObject entities)
+                problems.Add(schema.ContainsKey("entities")
+                    ? "'schema.entities' must be an object"
+                    : "'schema.entities' is missing");
+            else
+                // One level further than the containers, and for the same reason. An entity
+                // that is present but half-formed is the case the container check cannot see:
+                // ApplySchemaOp reaches 'fields' and 'constraints' through the entity, so a
+                // seeded entity lacking either ends in a stack trace from an operation the
+                // caller did name but a member they never mentioned. An *absent* entity is
+                // already handled well ("unknown entity: x"), which is what makes the
+                // half-formed one the gap rather than a second instance of the same case.
+                foreach (var (name, entity) in entities)
+                {
+                    if (entity is not JsonObject e)
+                    {
+                        problems.Add($"'schema.entities.{name}' must be an object");
+                        continue;
+                    }
+                    if (e["fields"] is not JsonObject)
+                        problems.Add(e.ContainsKey("fields")
+                            ? $"'schema.entities.{name}.fields' must be an object"
+                            : $"'schema.entities.{name}.fields' is missing");
+                    if (e["constraints"] is not JsonArray)
+                        problems.Add(e.ContainsKey("constraints")
+                            ? $"'schema.entities.{name}.constraints' must be an array"
+                            : $"'schema.entities.{name}.constraints' is missing");
+                }
+        }
+        // Rows are the quiet one. ApplyDataOp resolves an entity's rows as "array, or install
+        // an empty array", so a non-array container is discarded without an exception and the
+        // facet still reports complete — an approved document applied against contents that
+        // vanished on the way in. DropRemovedValues skips it just as silently, leaving spec
+        // §5.4's "a removal carries away the values" unperformed with nothing said. Absent is
+        // fine and normal (the entity simply has no rows yet); present-and-not-an-array is not.
+        if (world["data"] is JsonObject data)
+            foreach (var (name, rows) in data)
+                if (rows is not JsonArray)
+                    problems.Add($"'data.{name}' must be an array of rows");
+        // Artifact contents are read straight back as strings by ActiveStateAsync — which is
+        // the very method the container guard was written for. A seeded artifact holding null
+        // reproduces that original NullReferenceException at the same line, and one holding a
+        // number or an object trades it for a framework message naming neither the artifact
+        // nor the world. Nothing ever writes a non-string here (ResolveUiContent returns
+        // string), so a seeded one cannot have come from this adapter.
+        if (world["artifacts"] is JsonObject artifacts)
+            foreach (var (id, content) in artifacts)
+                if (content is not JsonValue v || v.GetValueKind() != System.Text.Json.JsonValueKind.String)
+                    problems.Add($"'artifacts.{id}' must be a string (the artifact's content)");
         if (problems.Count > 0)
             throw new ArgumentException(
                 $"seeded world does not carry the shape this adapter reads back: {string.Join("; ", problems)}. " +
-                "Expected { schema: { entities: {} }, data: {}, artifacts: {} } — domain contents go inside those.",
+                "Expected { schema: { entities: { \"<entity>\": { fields: {}, constraints: [] } } }, " +
+                "data: { \"<entity>\": [] }, artifacts: { \"<id>\": \"<content>\" } } — " +
+                "domain contents go inside those.",
                 "initialWorld");
     }
 

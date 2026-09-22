@@ -48,6 +48,16 @@ adapter.SeedTarget("app", new JsonObject
 });
 ```
 
+`SeedTarget` refuses a world that does not carry the shape the adapter reads back, naming
+every problem at once. The shape goes one level deeper than the three containers above:
+each entity under `schema.entities` is `{ "fields": {}, "constraints": [] }`, and each
+container under `data` is an **array** of rows, while each value under `artifacts` is the
+artifact's content as a **string**. Those are the members schema, data and UI operations
+address directly, so one that is present but half-formed is refused at the seed rather
+than surfacing later inside an operation that never named it. The world here seeds no
+entities and no rows, so it carries neither — every entry is optional, and only its shape
+is fixed once it is present.
+
 ## 2. An approved changeset
 
 Stage consumes changesets that follow the
