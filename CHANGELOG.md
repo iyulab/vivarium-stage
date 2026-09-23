@@ -15,6 +15,13 @@ define it.
   exception out of an adapter is a fault, so a host tells "refused" from "broken" by type rather than by
   which call it came out of. `Details` follows `StageRefusedException.Details`; a document refusal lists
   `{ path, message }` under `$.patches`, the shape Stage uses for a changeset that fails validation.
+- Conformance kit: `§3/flip-lands-prepared-state` — observes what an adapter did rather than what it
+  reported: after the flip, each UI artifact the document wrote must fingerprint to the content it wrote,
+  untouched artifacts must not move, and `schema` moves exactly when schema operations were carried. Data,
+  and a schema keyed below facet granularity, are reported as not verified. An adapter that reported
+  completion and staged nothing used to pass.
+- Conformance kit: `§3/refusal-leaves-no-residue` — a document refused part-way must leave nothing it
+  asked for on the branch. The other refusal probes all refuse at the first operation.
 
 ### Changed
 - **Breaking for adapter authors and hosts.** The conformance kit now asserts type, reason, message and —
@@ -32,15 +39,6 @@ define it.
   retry could fail. It now stages on a copy and swaps it in only when every operation has applied.
 - A document refused by the verified-diff layer-2 check is located at the patch member that did not match
   (`$.patches.ui[0].baseFingerprint`), not only at the patch.
-
-### Added (conformance kit)
-- `§3/flip-lands-prepared-state` — observes what an adapter did rather than what it reported: after the
-  flip, each UI artifact the document wrote must fingerprint to the content it wrote, untouched artifacts
-  must not move, and `schema` moves exactly when schema operations were carried. Data, and a schema keyed
-  below facet granularity, are reported as not verified. An adapter that reported completion and staged
-  nothing used to pass.
-- `§3/refusal-leaves-no-residue` — a document refused part-way must leave nothing it asked for on the
-  branch. The other refusal probes all refuse at the first operation.
 
 ## 0.8.0 — 2026-09-23
 
