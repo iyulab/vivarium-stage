@@ -379,6 +379,23 @@ public class ConformanceTests
     }
 
     [Fact]
+    public async Task A_fixture_patch_missing_its_content_is_reported_not_thrown()
+    {
+        // The reference adapter would refuse this patch; an adapter that accepts it still
+        // gets a report, and the restore still runs — the suite reports rather than throws.
+        var patches = Patches();
+        ((JsonObject)patches["ui"]![0]!).Remove("newContent");
+        var adapter = new ReportsCompletionStagesNothing(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, new ConformanceFixture("app", "no-such-target", patches));
+
+        var landed = report.Checks.Single(c => c.Id == ConformanceIds.FlipLandsPreparedState);
+        Assert.Contains("ui[0]: the fixture patch carries no newContent", landed.Detail);
+        Assert.Equal(ConformanceOutcome.Passed,
+            report.Checks.Single(c => c.Id == ConformanceIds.FlipRestoresPreviousState).Outcome);
+    }
+
+    [Fact]
     public async Task A_document_refused_part_way_that_leaves_what_landed_fails()
     {
         // Each of the suite's other refusal probes is refused at its first operation, so

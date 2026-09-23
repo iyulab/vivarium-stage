@@ -751,14 +751,24 @@ public static class AdapterConformance
         var problems = new List<string>();
         var unreached = new List<string>();
 
-        // Last write wins when a document patches one artifact twice.
+        // Last write wins when a document patches one artifact twice. The fixture is the
+        // author's input, and an adapter can accept a patch the reference adapter would
+        // refuse — so a member this needs may be missing. That is reported, never thrown:
+        // the suite reports rather than throws (§7), and one unreadable patch must not
+        // end the run before the restore check brings the fixture home.
         var written = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var patch in (patches["ui"] as System.Text.Json.Nodes.JsonArray ?? []).OfType<System.Text.Json.Nodes.JsonObject>())
+        foreach (var (patch, i) in (patches["ui"] as System.Text.Json.Nodes.JsonArray ?? [])
+                     .Select((p, i) => (p as System.Text.Json.Nodes.JsonObject, i)))
         {
-            var artifactId = patch["artifactId"]!.GetValue<string>();
-            written[artifactId] = patch["profile"]?.GetValue<string>() == "verified-diff@0"
-                ? patch["newFingerprint"]!.GetValue<string>()
-                : Vivarium.Changeset.ChangesetFingerprint.OfArtifact(patch["newContent"]!.GetValue<string>());
+            var artifactId = Text(patch?["artifactId"]);
+            var verified = Text(patch?["profile"]) == "verified-diff@0";
+            var expected = verified
+                ? Text(patch?["newFingerprint"])
+                : Text(patch?["newContent"]) is { } content ? Vivarium.Changeset.ChangesetFingerprint.OfArtifact(content) : null;
+            if (artifactId is null || expected is null)
+                unreached.Add($"ui[{i}]: the fixture patch carries no {(artifactId is null ? "artifactId" : verified ? "newFingerprint" : "newContent")} to derive the expected fingerprint from");
+            else
+                written[artifactId] = expected;
         }
         foreach (var (artifactId, expected) in written)
         {
@@ -804,6 +814,9 @@ public static class AdapterConformance
                 string.Join("; ", problems) + (note is null ? "" : $" ({note})"))
             : new ConformanceCheck(id, title, ConformanceOutcome.Passed, note));
     }
+
+    private static string? Text(System.Text.Json.Nodes.JsonNode? node) =>
+        node is System.Text.Json.Nodes.JsonValue v && v.TryGetValue<string>(out var text) ? text : null;
 
     private static readonly HashSet<string> FidelityModes = ["full", "subset", "stub"];
 
