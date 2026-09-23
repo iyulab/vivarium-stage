@@ -6,6 +6,42 @@ versioning: 0.x — minor for surface changes, patch for fixes. Stage versions
 independently of the changeset spec: it consumes the contract, it does not
 define it.
 
+## 0.9.0 — 2026-09-23
+
+### Added
+- **Adapter refusals have a type.** `AdapterRefusedException` with an `AdapterRefusalReason` —
+  `DocumentRefused`, `UnknownTarget`, `UnknownRef`, `ApplyTokenConflict`, `StateIsActive` — for every
+  case the adapter contract requires an adapter to refuse (`docs/adapter-api.md` v0.3, §6). Any other
+  exception out of an adapter is a fault, so a host tells "refused" from "broken" by type rather than by
+  which call it came out of. `Details` follows `StageRefusedException.Details`; a document refusal lists
+  `{ path, message }` under `$.patches`, the shape Stage uses for a changeset that fails validation.
+
+### Changed
+- **Breaking for adapter authors and hosts.** The conformance kit now asserts type, reason, message and —
+  for document refusals — a location. An adapter that refuses with another exception type fails those
+  checks. Hosts that caught `InvalidOperationException` to recognise a refusal from the reference adapter
+  must catch `AdapterRefusedException`. Stage does not wrap adapter refusals; they surface from
+  `ChangeSession.ApplyAsync` as thrown.
+- Depends on `Vivarium.Changeset` 0.5.0. The getting-started guide now builds approval records with
+  `ChangesetApproval.Add` instead of writing the JSON by hand, which takes the fingerprint from the
+  document and refuses one that changed after it was finalized.
+
+### Fixed
+- The reference adapter staged a document in place, so an operation naming something absent — found only
+  while applying — left the earlier operations of the refused document on the branch, and the corrected
+  retry could fail. It now stages on a copy and swaps it in only when every operation has applied.
+- A document refused by the verified-diff layer-2 check is located at the patch member that did not match
+  (`$.patches.ui[0].baseFingerprint`), not only at the patch.
+
+### Added (conformance kit)
+- `§3/flip-lands-prepared-state` — observes what an adapter did rather than what it reported: after the
+  flip, each UI artifact the document wrote must fingerprint to the content it wrote, untouched artifacts
+  must not move, and `schema` moves exactly when schema operations were carried. Data, and a schema keyed
+  below facet granularity, are reported as not verified. An adapter that reported completion and staged
+  nothing used to pass.
+- `§3/refusal-leaves-no-residue` — a document refused part-way must leave nothing it asked for on the
+  branch. The other refusal probes all refuse at the first operation.
+
 ## 0.8.0 — 2026-09-23
 
 ### Fixed
