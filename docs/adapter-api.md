@@ -1,8 +1,9 @@
-# Backend adapter boundary (v0.2)
+# Backend adapter boundary (v0.3)
 
 Normative boundary between Stage and its backend adapters. v0.1 fixed the
 *operations and contracts*; v0.2 records the signatures as finalized with the
-first real adapter — see §6. Companion to [fault-model.md](fault-model.md).
+first real adapter — see §6; v0.3 names the refusals (§6, Error taxonomy).
+Companion to [fault-model.md](fault-model.md).
 
 ## 1. Division of labor
 
@@ -87,32 +88,27 @@ A data operation is different and deliberately so: `where` is a predicate, and a
 predicate that selects no rows has done what it said. The distinction is whether the
 document **named** a thing it expected to find.
 
-The exception *type* is the adapter's choice (§Error taxonomy leaves it
-unspecified in v0); the *message* is not optional.
+The refusal is an `AdapterRefusedException` with reason `DocumentRefused`
+(§6, Error taxonomy), and it says where: `Details.errors` lists
+`{ path, message }` pairs, `path` rooted at `$` for the document's `patches`
+(`$.patches.schema[1].field`). That is the shape Stage itself uses for a
+changeset that fails validation, so a host reads both the same way.
 
-#### What identifies a refusal, since the type does not
+#### A refusal leaves the branch as preparable as it found it
 
-A host has to tell "this document was refused" from "something broke" — the
-two deserve different words in front of a person, and only one of them is the
-author's to fix. It cannot do that by inspecting the exception, because this
-document deliberately leaves the type open. So the identifier is **the call**:
-`prepare` is the door, and a throw from it is a verdict on the document as
-given. A host may act on that without unwrapping anything.
+A host that receives a document refusal tells the author "fix the document
+and try again". That advice is worthless if the retry lands on a branch the
+first attempt already spoiled — so nothing the refused document asked for may
+remain staged when the throw happens.
 
-That is a constraint on the adapter before it is a convenience for the host,
-and it has a second half. A refusal must leave the branch exactly as
-preparable as it found it — the check belongs before any staging mutation, so
-nothing is half-staged when the throw happens. Otherwise the identification is
-worthless in the case it exists for: the host tells the author "fix the
-document and try again", and the retry lands on a branch the first attempt
-already spoiled. `§3/refusal-leaves-branch-preparable` in the conformance kit
-checks this by re-preparing a document known to be good after a refusal.
-
-The bound is worth stating plainly, because it is the price of leaving the
-type open: a fault *inside* `prepare` that has nothing to do with the document
-will also be read as a refusal. Narrowing what `prepare` does is what keeps
-that window small — it checks the document and stages it, and it is not the
-place to do anything else.
+The shape check belongs before any staging mutation, but it is not enough on
+its own: an operation can be well formed and still name something absent, and
+that is found only while applying, after earlier operations of the same
+document have landed. Stage the document on a copy and make it the branch
+only once every operation has applied (the reference adapter does this), or
+undo what landed before throwing. `§3/refusal-leaves-branch-preparable` in the
+conformance kit checks this by re-preparing a document known to be good after
+a refusal.
 
 ## 4. Fidelity declaration (minimum schema)
 
@@ -141,7 +137,8 @@ recorded in the ledger with the apply (branching decision; fault-model §3).
   Surfaced by writing the conformance suite (§7), which initially checked
   discard on the flipped branch and so failed a correct adapter. The suite now
   discards a branch that was never flipped. Wording to be settled with the next
-  adapter that has an opinion — until then, adapters may refuse.
+  adapter that has an opinion — until then, adapters may refuse, and a refusal
+  is `AdapterRefusedException` with reason `StateIsActive`.
 
 ## 6. Signatures (finalized with the first adapter — .NET reference)
 
@@ -206,13 +203,33 @@ Design points that landed during implementation:
 - **Refs are opaque strings.** A branch ref doubles as a state ref once
   flipped (a branch *is* the thing that graduates to an apply). The first
   adapter binds them to backend project ids; the in-memory adapter to world keys.
-- **Error taxonomy (v0)**: gate refusals are Stage's (`StageRefusedException`);
-  adapter failures during branch/prepare are retryable-or-discardable (F1/F2);
-  `FlipAsync` re-issued with a used token for a *different* state ref MUST
-  throw — same token + same state ref is the idempotent recovery no-op.
-  Exception *types* stay unspecified, so what identifies a refusal of the
-  document is the call it came out of, not the exception — see §3, *What
-  identifies a refusal*.
+- **Error taxonomy (v0.3)**: gate refusals are Stage's (`StageRefusedException`).
+  The refusals this contract requires of an adapter are
+  `AdapterRefusedException`, whose `Reason` names the clause:
+
+  | Reason | Clause | `Details` |
+  | --- | --- | --- |
+  | `DocumentRefused` | §3 Operation input — malformed, outside the vocabulary, or naming something absent | `{ errors: [{ path, message }] }` |
+  | `UnknownTarget` | *Unknown targets: throw, never invent* (below) | `{ target }` |
+  | `UnknownRef` | a branch or state ref the adapter does not hold | `{ ref }` |
+  | `ApplyTokenConflict` | `FlipAsync` re-issued with a used token for a *different* state ref — same token + same state ref is the idempotent recovery no-op | `{ applyToken, usedFor, requested }` |
+  | `StateIsActive` | `discard` of the live state (§5) | `{ ref }` |
+
+  **Any other exception out of an adapter is a fault**, not a refusal — a bug, an
+  outage, an invariant that did not hold — and adapter failures during
+  branch/prepare remain retryable-or-discardable (F1/F2). A host can therefore
+  tell "the product said no" from "the backend broke" by type, and branch on
+  `Reason` for what to say. `Details` follows `StageRefusedException.Details`:
+  a snapshot, members per reason, and adding a member is not a breaking change.
+  Stage does not wrap an adapter refusal; it surfaces from
+  `ChangeSession.ApplyAsync` as the adapter threw it, because the verdict is the
+  backend's, not a gate's.
+
+  *Through v0.2 the exception type was unspecified*, and a host could identify
+  a refusal only by which call it came out of — which also read any fault
+  inside `prepare` as a refusal. Adapters written against v0.2 that refuse with
+  another type fail the refusal checks in §7 until they throw
+  `AdapterRefusedException`.
 - **Unknown targets: throw, never invent.** `ActiveStateAsync` on a target the
   adapter does not know (state lost, partially restored, renamed) MUST throw.
   Returning a fabricated or empty `ActiveState` would let a *guess* reach the
@@ -222,9 +239,7 @@ Design points that landed during implementation:
   recovery translates it into an `unresolved` verdict
   (`Reason = "active-state-unreadable"`, nothing appended) and carries on with
   the other targets, while the apply path surfaces it as a failed apply.
-  The exception type is not specified in v0; adapters should use whatever
-  their platform makes idiomatic (the reference adapter throws
-  `InvalidOperationException`).
+  The refusal is `AdapterRefusedException` with reason `UnknownTarget`.
 - **First adapter's flip primitive**: a stage-owned control project holds a
   targets pointer table and a flip log; one backend transaction (PostgreSQL ACID)
   inserts the unique flip token and repoints the target row. Atomic, durable,
@@ -276,8 +291,11 @@ Properties of the suite, and why:
   unverifiable rather than failing. An over-strict suite that fails honest
   adapters would be worse than none. Where a check verifies only part of what it
   appears to, it names the part it could not reach.
-- **Exception *types* are never asserted** — §Error taxonomy leaves them
-  unspecified in v0, so the checks assert only that a throw happened.
+- **Refusals are asserted by type and reason; faults are not.** Where a clause
+  requires a refusal, the check passes only for `AdapterRefusedException` with
+  that clause's reason and a message — and, for a document refusal, a location
+  in `Details.errors`. Anything else thrown there is reported with what was
+  thrown, because a host could not have told it from a fault.
 - **It mutates live state.** The run flips the fixture target to a prepared
   branch and flips it back, so it must be pointed at a disposable fixture and
   never at production. The restore runs last, always, and is reported as its own

@@ -227,12 +227,15 @@ public static class AdapterConformance
                 $"returned StateRef '{invented.StateRef}' for unknown target '{fixture.UnknownTarget}' — a fabricated pointer reaches the drift gate and recovery as if it were fact");
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception)
+        catch (Exception e)
         {
-            // Any exception type satisfies this: §Error taxonomy leaves the type
-            // unspecified in v0. Asserting a type would narrow the contract to
-            // one implementation's choice.
-            Pass(ConformanceIds.UnknownTargetThrows, unknownTitle);
+            // Throwing is half the clause; the other half is saying it was a refusal.
+            // A host that cannot tell "no such target" from "the backend broke" has to
+            // parse the message or report every absence as a crash (§6).
+            if (RefusalMismatch(e, AdapterRefusalReason.UnknownTarget) is { } mismatch)
+                Fail(ConformanceIds.UnknownTargetThrows, unknownTitle, mismatch);
+            else
+                Pass(ConformanceIds.UnknownTargetThrows, unknownTitle);
         }
 
         // ---- §3 activeState ----
@@ -395,13 +398,10 @@ public static class AdapterConformance
         catch (OperationCanceledException) { throw; }
         catch (Exception e) when (e is not NullReferenceException)
         {
-            // the exception TYPE is the adapter's choice (§Error taxonomy is
-            // unspecified in v0); refusing at all, with something to read, is not
-            Pass(ConformanceIds.PrepareRefusesMalformedDataOp, malformedDataTitle);
-            if (string.IsNullOrWhiteSpace(e.Message))
-                checks[^1] = new ConformanceCheck(ConformanceIds.PrepareRefusesMalformedDataOp,
-                    malformedDataTitle, ConformanceOutcome.Failed,
-                    "the refusal carried no message — §Error taxonomy requires a reason, and an empty one is not a reason");
+            if (RefusalMismatch(e, AdapterRefusalReason.DocumentRefused) is { } mismatch)
+                Fail(ConformanceIds.PrepareRefusesMalformedDataOp, malformedDataTitle, mismatch);
+            else
+                Pass(ConformanceIds.PrepareRefusesMalformedDataOp, malformedDataTitle);
         }
         catch (NullReferenceException)
         {
@@ -441,9 +441,8 @@ public static class AdapterConformance
         }
         catch (Exception e)
         {
-            if (string.IsNullOrWhiteSpace(e.Message))
-                Fail(ConformanceIds.PrepareRefusesMalformedSchemaOp, malformedSchemaTitle,
-                    "the refusal carried no message — §Error taxonomy requires a reason, and an empty one is not a reason");
+            if (RefusalMismatch(e, AdapterRefusalReason.DocumentRefused) is { } mismatch)
+                Fail(ConformanceIds.PrepareRefusesMalformedSchemaOp, malformedSchemaTitle, mismatch);
             else
                 Pass(ConformanceIds.PrepareRefusesMalformedSchemaOp, malformedSchemaTitle);
         }
@@ -484,9 +483,8 @@ public static class AdapterConformance
         }
         catch (Exception e)
         {
-            if (string.IsNullOrWhiteSpace(e.Message))
-                Fail(ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle,
-                    "the refusal carried no message — §Error taxonomy requires a reason, and an empty one is not a reason");
+            if (RefusalMismatch(e, AdapterRefusalReason.DocumentRefused) is { } mismatch)
+                Fail(ConformanceIds.PrepareRefusesAbsentSchemaTarget, absentTargetTitle, mismatch);
             else
                 // §7: where a check verifies only part of what it appears to, it names
                 // the part it could not reach. The probe addresses an entity, because
@@ -581,10 +579,12 @@ public static class AdapterConformance
                     "a used token was accepted for a different state ref — the token can no longer distinguish an idempotent replay from a different flip");
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception)
+            catch (Exception e)
             {
-                // Type unspecified in v0 — throwing at all is the contract.
-                Pass(ConformanceIds.TokenReuseDifferentStateThrows, reuseTitle);
+                if (RefusalMismatch(e, AdapterRefusalReason.ApplyTokenConflict) is { } mismatch)
+                    Fail(ConformanceIds.TokenReuseDifferentStateThrows, reuseTitle, mismatch);
+                else
+                    Pass(ConformanceIds.TokenReuseDifferentStateThrows, reuseTitle);
             }
         }
 
@@ -645,6 +645,26 @@ public static class AdapterConformance
     }
 
     private static readonly HashSet<string> FidelityModes = ["full", "subset", "stub"];
+
+    /// <summary>
+    /// Null when <paramref name="e"/> is the refusal a clause names; otherwise what is wrong
+    /// with it. A refusal is an <see cref="AdapterRefusedException"/> carrying the clause's
+    /// reason and a message (§6); a document refusal also says where (<c>Details.errors</c>),
+    /// because "fix the document" with no location is a round trip per error.
+    /// </summary>
+    private static string? RefusalMismatch(Exception e, AdapterRefusalReason expected) => e switch
+    {
+        AdapterRefusedException r when r.Reason != expected =>
+            $"refused as {r.Reason}, but this clause is {expected}: {r.Message}",
+        AdapterRefusedException r when string.IsNullOrWhiteSpace(r.Message) =>
+            "the refusal carried no message — §6 requires a reason, and an empty one is not a reason",
+        AdapterRefusedException { Reason: AdapterRefusalReason.DocumentRefused } r
+            when r.Details?["errors"] is not System.Text.Json.Nodes.JsonArray { Count: > 0 } =>
+            "a document refusal must locate what it refused — Details.errors was absent or empty",
+        AdapterRefusedException => null,
+        _ => $"threw {e.GetType().Name} ({e.Message}) — a refusal this contract names must be an " +
+             $"AdapterRefusedException({expected}), or a host cannot tell it from a fault (§6)",
+    };
 
     private static bool SameFingerprints(ActiveState a, ActiveState b) =>
         a.FacetFingerprints.Count == b.FacetFingerprints.Count &&

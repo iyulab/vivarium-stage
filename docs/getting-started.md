@@ -224,6 +224,26 @@ catch (StageRefusedException refusal) when (refusal.Reason == RefusalReason.Drif
 await drifting.DiscardAsync();
 ```
 
+The gates are Stage's verdicts. The backend has its own: an adapter refuses a
+document it cannot execute honestly, a target it does not know, a stale ref,
+a reused apply token, or discarding the live state — each as an
+`AdapterRefusedException` whose `Reason` names the case (adapter-api §6).
+Stage lets it through unwrapped. Anything else an adapter throws is a fault,
+so a host can say "refused" and "broken" in different words without reading
+the message:
+
+```csharp
+try
+{
+    await adapter.ActiveStateAsync("no-such-app");
+    throw new Exception("an unknown target must not get an invented pointer");
+}
+catch (AdapterRefusedException refusal) when (refusal.Reason == AdapterRefusalReason.UnknownTarget)
+{
+    Console.WriteLine($"no target named {refusal.Details!["target"]}");
+}
+```
+
 `Details` is `null` wherever the refusal has no fact a caller could act on
 differently — the fingerprint gate refuses a fingerprint the caller just
 submitted, and echoing it back would inform nobody. Its members are per-gate

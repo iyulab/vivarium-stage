@@ -1,3 +1,4 @@
+using Vivarium.Stage.Adapters;
 using Vivarium.Stage.Ledger;
 
 namespace Vivarium.Stage.Tests;
@@ -214,7 +215,10 @@ public class FaultInjectionTests
         Assert.Equal(after, world.Inner.ActiveWorldCanonical(TestWorld.TargetName));
 
         // the same token for a DIFFERENT state ref is a contract violation
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var conflict = await Assert.ThrowsAsync<AdapterRefusedException>(() =>
             world.Inner.FlipAsync(TestWorld.TargetName, "live-app", "tok-idem"));
+        Assert.Equal(AdapterRefusalReason.ApplyTokenConflict, conflict.Reason);
+        Assert.Equal("tok-idem", conflict.Details!["applyToken"]!.GetValue<string>());
+        Assert.Equal("live-app", conflict.Details!["requested"]!.GetValue<string>());
     }
 }

@@ -170,7 +170,8 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             foreach (var world in _targets.Values)
                 if (world.States.TryGetValue(stateRef, out var state))
                     return JsonCanonicalizer.Canonicalize(state.ToJsonString());
-            throw new InvalidOperationException($"unknown state ref: {stateRef}");
+            throw new AdapterRefusedException(AdapterRefusalReason.UnknownRef, $"unknown state ref: {stateRef}",
+                new JsonObject { ["ref"] = stateRef });
         }
     }
 
@@ -185,7 +186,10 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
     }
 
     private TargetWorld Get(string target) =>
-        _targets.TryGetValue(target, out var w) ? w : throw new InvalidOperationException($"unknown target: {target}");
+        _targets.TryGetValue(target, out var w)
+            ? w
+            : throw new AdapterRefusedException(AdapterRefusalReason.UnknownTarget, $"unknown target: {target}",
+                new JsonObject { ["target"] = target });
 
     public Task<BranchInfo> BranchAsync(string target, CancellationToken ct = default)
     {
@@ -211,11 +215,21 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         lock (_lock)
         {
             var world = _targets.Values.FirstOrDefault(w => w.States.ContainsKey(branchRef))
-                ?? throw new InvalidOperationException($"unknown branch: {branchRef}");
+                ?? throw new AdapterRefusedException(AdapterRefusalReason.UnknownRef, $"unknown branch: {branchRef}",
+                    new JsonObject { ["ref"] = branchRef });
             var prepared = world.Prepared.TryGetValue(branchRef, out var set) ? set : world.Prepared[branchRef] = [];
             if (!prepared.Contains(facets.ChangesetFingerprint))
             {
-                ApplyPatches(world.States[branchRef], facets.Patches);
+                // Staged on a copy and swapped in only once every operation has applied.
+                // The shape check runs before anything is touched, but an operation can be
+                // well formed and still name something absent — found only while applying,
+                // after earlier operations have already landed. Applying in place left
+                // those behind a refusal, so the branch a host was told to retry on was no
+                // longer the branch it prepared on (adapter-api §3, a refusal leaves the
+                // branch as preparable as it found it).
+                var staged = (JsonObject)world.States[branchRef].DeepClone();
+                ApplyPatches(staged, facets.Patches);
+                world.States[branchRef] = staged;
                 prepared.Add(facets.ChangesetFingerprint); // idempotent per changeset fingerprint
             }
             // Report the facets this document actually carried, not a constant. A
@@ -236,11 +250,14 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             if (world.FlipTokens.TryGetValue(applyToken, out var already))
             {
                 if (already != stateRef)
-                    throw new InvalidOperationException($"apply token {applyToken} was already used for a different state ref");
+                    throw new AdapterRefusedException(AdapterRefusalReason.ApplyTokenConflict,
+                        $"apply token {applyToken} was already used for a different state ref",
+                        new JsonObject { ["applyToken"] = applyToken, ["usedFor"] = already, ["requested"] = stateRef });
                 return Task.CompletedTask; // idempotent re-issue (fault-model F4/F6 recovery)
             }
             if (!world.States.ContainsKey(stateRef))
-                throw new InvalidOperationException($"unknown state ref: {stateRef}");
+                throw new AdapterRefusedException(AdapterRefusalReason.UnknownRef, $"unknown state ref: {stateRef}",
+                new JsonObject { ["ref"] = stateRef });
             world.ActiveRef = stateRef; // THE atomic mutation — a single pointer swap
             world.FlipTokens[applyToken] = stateRef;
             return Task.CompletedTask;
@@ -271,7 +288,8 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             foreach (var world in _targets.Values)
             {
                 if (world.ActiveRef == branchRef)
-                    throw new InvalidOperationException("refusing to discard the active state");
+                    throw new AdapterRefusedException(AdapterRefusalReason.StateIsActive, "refusing to discard the active state",
+                        new JsonObject { ["ref"] = branchRef });
                 world.States.Remove(branchRef);
                 world.Prepared.Remove(branchRef);
             }
@@ -304,13 +322,13 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         // call without ever building a ChangeSession, so "the validator checked it"
         // is not a property this method can rely on.
         foreach (var (op, i) in (patches["schema"] as JsonArray ?? []).Select((o, i) => (o, i)))
-            RequireWellFormedSchemaOp(op, $"patches.schema[{i}]");
+            RequireWellFormedSchemaOp(op, $"$.patches.schema[{i}]");
         foreach (var (patch, i) in (patches["ui"] as JsonArray ?? []).Select((o, i) => (o, i)))
-            RequireWellFormedUiPatch(patch, $"patches.ui[{i}]");
+            RequireWellFormedUiPatch(patch, $"$.patches.ui[{i}]");
         var dataPatches = (patches["data"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
         for (var p = 0; p < dataPatches.Length; p++)
             foreach (var (op, i) in (dataPatches[p]["operations"] as JsonArray ?? []).Select((o, i) => (o, i)))
-                RequireWellFormedDataOp(op, $"patches.data[{p}].operations[{i}]");
+                RequireWellFormedDataOp(op, $"$.patches.data[{p}].operations[{i}]");
 
         // Spec §5.4 — expand, then move the values, then contract. Adding first is what
         // lets one document create an entity and populate it; removing last is what lets
@@ -318,28 +336,29 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         // Applying every schema operation up front (which this did through 0.7.x) makes
         // the second of those unexpressible, and leaves a cleared-then-removed field
         // behind as a member no schema declares.
-        var schemaOps = (patches["schema"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+        var schemaOps = (patches["schema"] as JsonArray ?? [])
+            .Select((o, i) => (Op: (JsonObject)o!, Path: $"$.patches.schema[{i}]")).ToArray();
         var entities = (JsonObject)world["schema"]!["entities"]!;
 
-        foreach (var op in schemaOps.Where(o => !IsRemoval(o)))
-            ApplySchemaOp(entities, op);
+        foreach (var (op, path) in schemaOps.Where(o => !IsRemoval(o.Op)))
+            ApplySchemaOp(entities, op, path);
 
         // UI patches address artifacts, not rows — nothing observable depends on where
         // they fall, so they keep their place between the two schema phases.
-        foreach (var patch in (patches["ui"] as JsonArray ?? []).OfType<JsonObject>())
+        foreach (var (patch, i) in (patches["ui"] as JsonArray ?? []).Select((o, i) => ((JsonObject)o!, i)))
         {
             var artifacts = (JsonObject)world["artifacts"]!;
             var artifactId = patch["artifactId"]!.GetValue<string>();
-            artifacts[artifactId] = ResolveUiContent(artifacts, artifactId, patch);
+            artifacts[artifactId] = ResolveUiContent(artifacts, artifactId, patch, $"$.patches.ui[{i}]");
         }
 
         foreach (var patch in (patches["data"] as JsonArray ?? []).OfType<JsonObject>())
             foreach (var op in (patch["operations"] as JsonArray ?? []).OfType<JsonObject>())
                 ApplyDataOp((JsonObject)world["data"]!, op);
 
-        foreach (var op in schemaOps.Where(IsRemoval))
+        foreach (var (op, path) in schemaOps.Where(o => IsRemoval(o.Op)))
         {
-            ApplySchemaOp(entities, op);
+            ApplySchemaOp(entities, op, path);
             // §5.4: a removal carries away the values stored under what it removes.
             // Dropping the declaration alone would leave rows holding members nothing
             // in the schema explains — and nothing in the operation vocabulary can
@@ -371,27 +390,33 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
     /// verification (spec §8) — fail-closed: any mismatch aborts the whole
     /// staging application, never a partial land.
     /// </summary>
-    private static string ResolveUiContent(JsonObject artifacts, string artifactId, JsonObject patch)
+    private static string ResolveUiContent(JsonObject artifacts, string artifactId, JsonObject patch, string path)
     {
         var profile = patch["profile"]?.GetValue<string>();
         if (profile != "verified-diff@0")
             return patch["newContent"]!.GetValue<string>();
         if (artifacts[artifactId] is not JsonValue baseNode || baseNode.GetValue<string>() is not { } baseContent)
-            throw new InvalidOperationException(
+            throw AdapterRefusedException.Document($"{path}.artifactId",
                 $"verified-diff patch targets unknown artifact '{artifactId}' (creation is whole-artifact@0's job)");
         var verdict = VerifiedDiff.VerifyAgainstBase(patch, baseContent);
         if (!verdict.Ok)
-            throw new InvalidOperationException(
-                $"verified-diff layer-2 verification failed for '{artifactId}': " +
-                string.Join("; ", verdict.Errors.Select(e => $"{e.Path}: {e.Message}")));
+            throw new AdapterRefusedException(AdapterRefusalReason.DocumentRefused,
+                $"{path}: verified-diff layer-2 verification failed for '{artifactId}': " +
+                string.Join("; ", verdict.Errors.Select(e => $"{e.Path}: {e.Message}")),
+                new JsonObject
+                {
+                    ["errors"] = new JsonArray(verdict.Errors
+                        .Select(e => (JsonNode)new JsonObject { ["path"] = path, ["message"] = $"{e.Path}: {e.Message}" })
+                        .ToArray()),
+                });
         return verdict.NewContent!;
     }
 
-    private static void ApplySchemaOp(JsonObject entities, JsonObject op)
+    private static void ApplySchemaOp(JsonObject entities, JsonObject op, string path)
     {
         var entity = op["entity"]!.GetValue<string>();
         JsonObject EntityObj() => entities[entity] as JsonObject
-            ?? throw new InvalidOperationException($"unknown entity: {entity}");
+            ?? throw AdapterRefusedException.Document($"{path}.entity", $"unknown entity: {entity}");
         switch (op["op"]!.GetValue<string>())
         {
             case "entity.create":
@@ -424,7 +449,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 // a declared-but-empty field that no later read distinguishes from a
                 // real one. Refuse instead: the entity is known, the field is not.
                 var moved = fieldsObj[oldName]?.DeepClone()
-                    ?? throw new InvalidOperationException(
+                    ?? throw AdapterRefusedException.Document($"{path}.field",
                         $"cannot rename '{oldName}' on entity '{entity}': no such field");
                 fieldsObj.Remove(oldName);
                 fieldsObj[op["newName"]!.GetValue<string>()] = moved;
@@ -432,7 +457,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             case "field.retype":
                 var retypeName = op["field"]!.GetValue<string>();
                 var target = ((JsonObject)EntityObj()["fields"]!)[retypeName] as JsonObject
-                    ?? throw new InvalidOperationException(
+                    ?? throw AdapterRefusedException.Document($"{path}.field",
                         $"cannot retype '{retypeName}' on entity '{entity}': no such field");
                 target["type"] = op["newType"]!.GetValue<string>();
                 break;
@@ -443,7 +468,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 // the facet complete on that is completion for work not done: an
                 // approved document said this field would go, and nothing went.
                 if (!removeFrom.Remove(removeName))
-                    throw new InvalidOperationException(
+                    throw AdapterRefusedException.Document($"{path}.field",
                         $"cannot remove '{removeName}' on entity '{entity}': no such field");
                 break;
             case "constraint.add":
@@ -464,7 +489,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                         removed = true;
                     }
                 if (!removed)
-                    throw new InvalidOperationException(
+                    throw AdapterRefusedException.Document($"{path}.constraint",
                         $"cannot remove a constraint on entity '{entity}': no such constraint");
                 break;
             default:
@@ -499,20 +524,20 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
     private static void RequireWellFormedSchemaOp(JsonNode? node, string path)
     {
         if (node is not JsonObject op)
-            throw new InvalidOperationException($"{path}: schema operation must be a JSON object");
+            throw AdapterRefusedException.Document($"{path}", $"schema operation must be a JSON object");
 
         var kind = (op["op"] as JsonValue)?.TryGetValue(out string? k) == true ? k : null;
         if (kind is null || !SchemaOpMembers.TryGetValue(kind, out var required))
-            throw new InvalidOperationException(
-                $"{path}.op: unknown schema operation '{op["op"]?.ToJsonString() ?? "undefined"}' " +
+            throw AdapterRefusedException.Document($"{path}.op",
+                $"unknown schema operation '{op["op"]?.ToJsonString() ?? "undefined"}' " +
                 $"(expected one of: {string.Join(", ", SchemaOpMembers.Keys)})");
 
         foreach (var member in required)
             if (!op.ContainsKey(member))
-                throw new InvalidOperationException($"{path}.{member}: required by {kind}");
+                throw AdapterRefusedException.Document($"{path}.{member}", $"required by {kind}");
 
         if ((op["entity"] as JsonValue)?.TryGetValue(out string? entity) != true || string.IsNullOrEmpty(entity))
-            throw new InvalidOperationException($"{path}.entity: required non-empty string");
+            throw AdapterRefusedException.Document($"{path}.entity", $"required non-empty string");
 
         // `field` is an object for field.add (the declaration) and a name for the
         // operations that address an existing one — the vocabulary's one asymmetry,
@@ -520,43 +545,43 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         if (kind == "field.add")
         {
             if (op["field"] is not JsonObject declaration)
-                throw new InvalidOperationException($"{path}.field: field.add declares a field, so this must be an object");
+                throw AdapterRefusedException.Document($"{path}.field", $"field.add declares a field, so this must be an object");
             if ((declaration["name"] as JsonValue)?.TryGetValue(out string? fieldName) != true || string.IsNullOrEmpty(fieldName))
-                throw new InvalidOperationException($"{path}.field.name: required non-empty string");
+                throw AdapterRefusedException.Document($"{path}.field.name", $"required non-empty string");
         }
         else if (required.Contains("field")
             && ((op["field"] as JsonValue)?.TryGetValue(out string? named) != true || string.IsNullOrEmpty(named)))
         {
-            throw new InvalidOperationException($"{path}.field: required non-empty field name");
+            throw AdapterRefusedException.Document($"{path}.field", $"required non-empty field name");
         }
 
         foreach (var member in new[] { "newName", "newType" })
             if (required.Contains(member)
                 && ((op[member] as JsonValue)?.TryGetValue(out string? value) != true || string.IsNullOrEmpty(value)))
-                throw new InvalidOperationException($"{path}.{member}: required non-empty string");
+                throw AdapterRefusedException.Document($"{path}.{member}", $"required non-empty string");
 
         if (kind == "entity.create" && op["fields"] is not JsonArray)
-            throw new InvalidOperationException($"{path}.fields: entity.create requires an array of field declarations");
+            throw AdapterRefusedException.Document($"{path}.fields", $"entity.create requires an array of field declarations");
         if (kind == "entity.create")
             foreach (var (f, i) in ((JsonArray)op["fields"]!).Select((f, i) => (f, i)))
                 if ((f as JsonObject)?["name"] is not JsonValue name
                     || !name.TryGetValue(out string? n) || string.IsNullOrEmpty(n))
-                    throw new InvalidOperationException($"{path}.fields[{i}].name: required non-empty string");
+                    throw AdapterRefusedException.Document($"{path}.fields[{i}].name", $"required non-empty string");
     }
 
     /// <summary>Refuse a UI patch this adapter cannot execute honestly (adapter-api §Operation input).</summary>
     private static void RequireWellFormedUiPatch(JsonNode? node, string path)
     {
         if (node is not JsonObject patch)
-            throw new InvalidOperationException($"{path}: UI patch must be a JSON object");
+            throw AdapterRefusedException.Document($"{path}", $"UI patch must be a JSON object");
 
         if ((patch["artifactId"] as JsonValue)?.TryGetValue(out string? artifactId) != true || string.IsNullOrEmpty(artifactId))
-            throw new InvalidOperationException($"{path}.artifactId: required non-empty string");
+            throw AdapterRefusedException.Document($"{path}.artifactId", $"required non-empty string");
 
         var profile = (patch["profile"] as JsonValue)?.TryGetValue(out string? p) == true ? p : null;
         if (profile is not ("whole-artifact@0" or "verified-diff@0"))
-            throw new InvalidOperationException(
-                $"{path}.profile: unknown UI patch profile '{patch["profile"]?.ToJsonString() ?? "undefined"}' " +
+            throw AdapterRefusedException.Document($"{path}.profile",
+                $"unknown UI patch profile '{patch["profile"]?.ToJsonString() ?? "undefined"}' " +
                 "(expected whole-artifact@0 or verified-diff@0)");
 
         // verified-diff@0's own inputs are already verified where they are resolved
@@ -564,36 +589,36 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         // duplicate a check that has to live there anyway.
         if (profile == "whole-artifact@0"
             && ((patch["newContent"] as JsonValue)?.TryGetValue(out string? _) != true))
-            throw new InvalidOperationException($"{path}.newContent: whole-artifact@0 carries the full content, so this is required");
+            throw AdapterRefusedException.Document($"{path}.newContent", $"whole-artifact@0 carries the full content, so this is required");
     }
 
     private static void RequireWellFormedDataOp(JsonNode? node, string path)
     {
         if (node is not JsonObject op)
-            throw new InvalidOperationException($"{path}: data operation must be a JSON object");
+            throw AdapterRefusedException.Document($"{path}", $"data operation must be a JSON object");
 
         var kind = (op["op"] as JsonValue)?.TryGetValue(out string? k) == true ? k : null;
         if (kind is not ("insert" or "update" or "delete"))
-            throw new InvalidOperationException(
-                $"{path}.op: unknown data operation '{op["op"]?.ToJsonString() ?? "undefined"}' " +
+            throw AdapterRefusedException.Document($"{path}.op",
+                $"unknown data operation '{op["op"]?.ToJsonString() ?? "undefined"}' " +
                 "(expected insert, update, or delete)");
 
         if ((op["entity"] as JsonValue)?.TryGetValue(out string? entity) != true || string.IsNullOrEmpty(entity))
-            throw new InvalidOperationException($"{path}.entity: required non-empty string");
+            throw AdapterRefusedException.Document($"{path}.entity", $"required non-empty string");
 
         if (kind is "insert" && op["values"] is not JsonObject)
-            throw new InvalidOperationException($"{path}.values: insert requires an object of field name to value");
+            throw AdapterRefusedException.Document($"{path}.values", $"insert requires an object of field name to value");
         if (kind is "update" && op["set"] is not JsonObject)
-            throw new InvalidOperationException($"{path}.set: update requires an object of field name to value");
+            throw AdapterRefusedException.Document($"{path}.set", $"update requires an object of field name to value");
 
         if (kind is "insert") return;
         if (op["where"] is not JsonObject where)
-            throw new InvalidOperationException(
-                $"{path}.where: {kind} requires a predicate object {{ field, equals }}");
+            throw AdapterRefusedException.Document($"{path}.where",
+                $"{kind} requires a predicate object {{ field, equals }}");
         if ((where["field"] as JsonValue)?.TryGetValue(out string? field) != true || string.IsNullOrEmpty(field))
-            throw new InvalidOperationException($"{path}.where.field: required non-empty string");
+            throw AdapterRefusedException.Document($"{path}.where.field", $"required non-empty string");
         if (!where.ContainsKey("equals"))
-            throw new InvalidOperationException($"{path}.where.equals: required — a literal to compare against");
+            throw AdapterRefusedException.Document($"{path}.where.equals", $"required — a literal to compare against");
     }
 
     private static void ApplyDataOp(JsonObject data, JsonObject op)

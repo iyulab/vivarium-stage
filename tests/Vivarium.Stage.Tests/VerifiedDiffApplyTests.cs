@@ -59,8 +59,12 @@ public class VerifiedDiffApplyTests
         var doc = await VerifiedDiffChangesetAsync(world, "export function LoanScreen() { /* stale */ }");
 
         var session = await world.SimulatedSessionAsync(doc);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => session.ApplyAsync("operator-1"));
+        // The backend's verdict on the document, surfaced as the adapter threw it —
+        // Stage's gates had no objection, so it is not a StageRefusedException.
+        var ex = await Assert.ThrowsAsync<AdapterRefusedException>(() => session.ApplyAsync("operator-1"));
+        Assert.Equal(AdapterRefusalReason.DocumentRefused, ex.Reason);
         Assert.Contains("layer-2", ex.Message);
+        Assert.Equal("$.patches.ui[0]", ex.Details!["errors"]![0]!["path"]!.GetValue<string>());
 
         // nothing landed — the active state still fingerprints to the original base
         var active = await world.Inner.ActiveStateAsync(TestWorld.TargetName);
@@ -89,7 +93,9 @@ public class VerifiedDiffApplyTests
         });
 
         var session = await world.SimulatedSessionAsync(doc);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => session.ApplyAsync("operator-1"));
+        var ex = await Assert.ThrowsAsync<AdapterRefusedException>(() => session.ApplyAsync("operator-1"));
+        Assert.Equal(AdapterRefusalReason.DocumentRefused, ex.Reason);
         Assert.Contains("unknown artifact", ex.Message);
+        Assert.Equal("$.patches.ui[0].artifactId", ex.Details!["errors"]![0]!["path"]!.GetValue<string>());
     }
 }

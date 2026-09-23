@@ -136,11 +136,10 @@ public class ConformanceTests
     [Fact]
     public async Task Refusing_correctly_but_spoiling_the_branch_fails()
     {
-        // Since the exception type is the adapter's choice, the call is what
-        // identifies a refusal — and a host acting on that identification tells the
-        // author to fix the document and retry. This adapter refuses correctly, with
-        // a reason, every time; it simply cannot be prepared again afterwards, so the
-        // advice the identification enables goes nowhere.
+        // A host that receives a document refusal tells the author to fix the document
+        // and retry. This adapter refuses correctly, with a reason, every time; it
+        // simply cannot be prepared again afterwards, so the advice the refusal
+        // enables goes nowhere.
         var adapter = new SpoilsTheBranchOnRefusal(Seeded());
 
         var report = await AdapterConformance.RunAsync(adapter, Fixture());
@@ -282,20 +281,56 @@ public class ConformanceTests
     }
 
     [Fact]
-    public async Task Throwing_any_exception_type_satisfies_the_unspecified_error_taxonomy()
+    public async Task Throwing_a_foreign_exception_type_fails_the_refusal_clauses()
     {
-        // §Error taxonomy: "The exception type is not specified in v0."
-        // Asserting a type would narrow the contract to the reference adapter.
+        // Through 0.8 the type was unspecified and any throw passed. A host then had to
+        // tell "no such target" from "the backend broke" by which call it came out of,
+        // or by parsing the message. §6 now names the refusal: throwing is half of the
+        // clause, and saying it was a refusal is the other half.
         var adapter = new ThrowsCustomExceptionType(Seeded());
 
         var report = await AdapterConformance.RunAsync(adapter, Fixture());
 
-        Assert.DoesNotContain(report.Failures, f => f.Id == ConformanceIds.UnknownTargetThrows);
-        Assert.DoesNotContain(report.Failures, f => f.Id == ConformanceIds.TokenReuseDifferentStateThrows);
-        // Asserting the whole run passes is what catches a decorator whose own
-        // token guard swallows the restore flip — absence from Failures on two
-        // ids would not notice the fixture failing to come home.
-        Assert.True(report.AllPassed, report.ToString());
+        var failed = report.Failures.Select(f => f.Id).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(
+            new[] { ConformanceIds.UnknownTargetThrows, ConformanceIds.TokenReuseDifferentStateThrows }.Order(StringComparer.Ordinal),
+            failed);
+        Assert.All(report.Failures, f => Assert.Contains("AdapterRefusedException", f.Detail));
+        // Everything else passes, including the restore — which is what catches a
+        // decorator whose own token guard swallows the restore flip.
+        Assert.Equal(ConformanceOutcome.Passed,
+            report.Checks.Single(c => c.Id == ConformanceIds.FlipRestoresPreviousState).Outcome);
+    }
+
+    [Fact]
+    public async Task Refusing_under_the_wrong_reason_fails()
+    {
+        var adapter = new RefusesUnknownTargetAsUnknownRef(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        var check = report.Failures.Single();
+        Assert.Equal(ConformanceIds.UnknownTargetThrows, check.Id);
+        Assert.Contains("refused as UnknownRef, but this clause is UnknownTarget", check.Detail);
+    }
+
+    [Fact]
+    public async Task A_document_refusal_that_does_not_say_where_fails()
+    {
+        // "Fix the document" with no location costs the author a round trip per error.
+        var adapter = new RefusesDocumentsWithoutLocation(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        Assert.Equal(
+            new[]
+            {
+                ConformanceIds.PrepareRefusesAbsentSchemaTarget,
+                ConformanceIds.PrepareRefusesMalformedDataOp,
+                ConformanceIds.PrepareRefusesMalformedSchemaOp,
+            },
+            report.Failures.Select(f => f.Id).Order(StringComparer.Ordinal));
+        Assert.All(report.Failures, f => Assert.Contains("Details.errors", f.Detail));
     }
 
     private static void AssertFailedOnly(ConformanceReport report, string expectedId)
@@ -323,7 +358,7 @@ public class ConformanceTests
         public override async Task<ActiveState> ActiveStateAsync(string t, CancellationToken ct = default)
         {
             try { return await Inner.ActiveStateAsync(t, ct); }
-            catch (InvalidOperationException) { return new ActiveState("invented", new Dictionary<string, string>()); }
+            catch (AdapterRefusedException) { return new ActiveState("invented", new Dictionary<string, string>()); }
         }
     }
 
@@ -333,7 +368,7 @@ public class ConformanceTests
             string branchRef, PreparedFacets facets, CancellationToken ct = default)
         {
             try { return await Inner.PrepareAsync(branchRef, facets, ct); }
-            catch (InvalidOperationException)
+            catch (AdapterRefusedException)
             {
                 return new PrepareReport(new Dictionary<string, bool>
                 {
@@ -377,11 +412,15 @@ public class ConformanceTests
         public override async Task<PrepareReport> PrepareAsync(
             string branchRef, PreparedFacets facets, CancellationToken ct = default)
         {
+            // Refusals still come out as refusals; it is only the good document that
+            // lands on the residue — which is the retry a host sends the author back to.
+            PrepareReport report;
+            try { report = await Inner.PrepareAsync(branchRef, facets, ct); }
+            catch (AdapterRefusedException) { spoiled.Add(branchRef); throw; }
             if (spoiled.Contains(branchRef))
                 throw new InvalidOperationException(
                     "the branch is half-staged from an earlier refusal and cannot be prepared again");
-            try { return await Inner.PrepareAsync(branchRef, facets, ct); }
-            catch (InvalidOperationException) { spoiled.Add(branchRef); throw; }
+            return report;
         }
     }
 
@@ -391,7 +430,32 @@ public class ConformanceTests
             string branchRef, PreparedFacets facets, CancellationToken ct = default)
         {
             try { return await Inner.PrepareAsync(branchRef, facets, ct); }
-            catch (InvalidOperationException) { throw new NullReferenceException(); }
+            catch (AdapterRefusedException) { throw new NullReferenceException(); }
+        }
+    }
+
+    private sealed class RefusesUnknownTargetAsUnknownRef(IBackendAdapter inner) : Passthrough(inner)
+    {
+        public override async Task<ActiveState> ActiveStateAsync(string t, CancellationToken ct = default)
+        {
+            try { return await Inner.ActiveStateAsync(t, ct); }
+            catch (AdapterRefusedException e) when (e.Reason == AdapterRefusalReason.UnknownTarget)
+            {
+                throw new AdapterRefusedException(AdapterRefusalReason.UnknownRef, e.Message);
+            }
+        }
+    }
+
+    private sealed class RefusesDocumentsWithoutLocation(IBackendAdapter inner) : Passthrough(inner)
+    {
+        public override async Task<PrepareReport> PrepareAsync(
+            string branchRef, PreparedFacets facets, CancellationToken ct = default)
+        {
+            try { return await Inner.PrepareAsync(branchRef, facets, ct); }
+            catch (AdapterRefusedException e) when (e.Reason == AdapterRefusalReason.DocumentRefused)
+            {
+                throw new AdapterRefusedException(AdapterRefusalReason.DocumentRefused, e.Message);
+            }
         }
     }
 
@@ -493,7 +557,7 @@ public class ConformanceTests
         public override async Task<ActiveState> ActiveStateAsync(string t, CancellationToken ct = default)
         {
             try { return await Inner.ActiveStateAsync(t, ct); }
-            catch (InvalidOperationException e) { throw new BackendUnreachable(e.Message); }
+            catch (AdapterRefusedException e) { throw new BackendUnreachable(e.Message); }
         }
 
         public override async Task FlipAsync(string t, string s, string tok, CancellationToken ct = default)
