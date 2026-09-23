@@ -6,6 +6,50 @@ versioning: 0.x — minor for surface changes, patch for fixes. Stage versions
 independently of the changeset spec: it consumes the contract, it does not
 define it.
 
+## 0.8.0 — 2026-09-23
+
+### Fixed
+- `InMemoryBackendAdapter.SeedTarget` now refuses a world that does not carry the shape the
+  adapter reads back — `schema.entities`, `data` and `artifacts` — naming every missing or
+  mistyped container in one message. A partial world previously seeded without complaint and
+  then raised a `NullReferenceException` from `ActiveStateAsync`, which also stopped
+  `AdapterConformance.RunAsync` and `ChangeSession.ApplyAsync` from reaching a result.
+- The same guard descends into the shapes the adapter addresses inside those containers: an
+  entity's `fields` and `constraints`, each `data` container's row array, and each artifact's
+  string content. A world that passed the container check but failed inside one of these raised a
+  stack trace naming a member the caller never supplied — and a non-array `data` container raised
+  nothing at all: its contents were discarded and the facet still reported complete. Every problem
+  is collected into the one refusal, which states the full shape.
+
+### Changed
+- **`ConformanceFixture` refuses a patch set the adapter could not read** — a key that is not a
+  facet (`schema` / `ui` / `data`), a facet that is not an array, or facets that are all empty.
+  Such a fixture made `prepare` stage nothing while the run still came back green, a report
+  indistinguishable byte-for-byte from a real pass. The refusal names the keys it found.
+- **`prepare reports per-facet completion` now checks coverage, not count.** The verdict states
+  which facets the document carried and fails an adapter whose report omits one of them or claims
+  one the document never carried. Counting entries passed any adapter answering with a constant.
+- **`InMemoryBackendAdapter.PrepareAsync` reports the facets the document actually carried**
+  instead of a fixed `schema`/`ui`/`data` triple. As the reference implementation of the contract,
+  it was modelling the habit the check above now fails.
+- `adapter-api.md` states the per-facet rule explicitly; getting-started's conformance example
+  uses the changeset's own facet key (`ui`) — the previous key was not one the adapter reads.
+
+- **The reference adapter applies a document in the order changeset spec §5.4 fixes** — additive
+  schema operations, then data operations, then removing ones — and a `field.remove` /
+  `entity.remove` now takes the stored values with it. It previously applied every schema
+  operation first and left removed values in place, so a document that cleared a field and
+  removed it left rows carrying a member no schema declared, and a data operation could not
+  address a field on its way out. `adapter-api.md` states the order.
+
+### Dependencies
+- `Vivarium.Changeset` 0.4.0 (was 0.3.0).
+
+> **Upgrade note for adapter authors**: a fixture whose patch set is empty or misspelled now throws
+> `ArgumentException` at construction instead of producing a green run. That is the point of the
+> change — the run it used to produce was not evidence of anything. Separately, if your adapter
+> applies all schema operations before data operations, spec §5.4 now says it must not.
+
 ## 0.7.0 — 2026-09-19
 
 ### Changed
