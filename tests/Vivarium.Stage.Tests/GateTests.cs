@@ -101,12 +101,7 @@ public class GateTests
             ["fingerprint"] = "sha256:" + new string('a', 64),
         });
         var restamped = Vivarium.Changeset.ChangesetFingerprint.Stamp(stripped);
-        restamped["approvals"] = new JsonArray(new JsonObject
-        {
-            ["fingerprint"] = restamped["fingerprint"]!.GetValue<string>(),
-            ["approvedBy"] = "reviewer-1",
-            ["approvedAt"] = "2026-07-16T01:00:00Z",
-        });
+        restamped = Vivarium.Changeset.ChangesetApproval.Add(restamped, "reviewer-1", "2026-07-16T01:00:00Z");
 
         var session = await world.SimulatedSessionAsync(restamped);
         var ex = await Assert.ThrowsAsync<StageRefusedException>(() => session.ApplyAsync("operator-1"));
@@ -124,6 +119,8 @@ public class GateTests
         ((JsonObject)stripped["provenance"]!)["baseState"] = new JsonArray(
             new JsonObject { ["kind"] = "schema" }); // missing ref + fingerprint
         var restamped = Vivarium.Changeset.ChangesetFingerprint.Stamp(stripped);
+        // written by hand: ChangesetApproval.Add refuses to approve an invalid document,
+        // and this test needs one to reach session admission
         restamped["approvals"] = new JsonArray(new JsonObject
         {
             ["fingerprint"] = restamped["fingerprint"]!.GetValue<string>(),
@@ -154,12 +151,7 @@ public class GateTests
             ["fingerprint"] = "sha256:" + new string('b', 64),
         });
         var restamped = Vivarium.Changeset.ChangesetFingerprint.Stamp(stripped);
-        restamped["approvals"] = new JsonArray(new JsonObject
-        {
-            ["fingerprint"] = restamped["fingerprint"]!.GetValue<string>(),
-            ["approvedBy"] = "reviewer-1",
-            ["approvedAt"] = "2026-07-16T01:00:00Z",
-        });
+        restamped = Vivarium.Changeset.ChangesetApproval.Add(restamped, "reviewer-1", "2026-07-16T01:00:00Z");
 
         var session = await world.SimulatedSessionAsync(restamped);
         await session.ApplyAsync("operator-1"); // lineage entry ignored by the drift gate

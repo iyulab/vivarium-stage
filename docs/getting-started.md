@@ -73,7 +73,9 @@ matter:
   data should declare a `data` entry (changeset spec 0.3), or rows can change
   under it unnoticed.
 - **An approval is bound to the exact fingerprint.** Approving "the idea of
-  the change" is not a thing; the record names the bytes.
+  the change" is not a thing; the record names the bytes. `ChangesetApproval.Add`
+  takes that fingerprint from the document itself and refuses a document that
+  changed after it was finalized, so the record cannot name the wrong bytes.
 
 ```csharp
 var live = await adapter.ActiveStateAsync("app");
@@ -90,12 +92,7 @@ var changeset = new ChangesetBuilder(
         "Retitle the heading to Orders.")
     .Finalize();
 
-changeset["approvals"] = new JsonArray(new JsonObject
-{
-    ["fingerprint"] = changeset["fingerprint"]!.GetValue<string>(),
-    ["approvedBy"] = "reviewer-1",
-    ["approvedAt"] = "2026-07-17T01:00:00Z",
-});
+changeset = ChangesetApproval.Add(changeset, "reviewer-1", "2026-07-17T01:00:00Z");
 ```
 
 ## 3. The lifecycle: branch → simulate → apply
@@ -192,12 +189,7 @@ var stale = ChangesetFingerprint.Stamp(unapproved); // never mind the approval h
     ["fingerprint"] = "sha256:" + new string('0', 64), // a base that never existed
 });
 var rebased = ChangesetFingerprint.Stamp(stale);
-rebased["approvals"] = new JsonArray(new JsonObject
-{
-    ["fingerprint"] = rebased["fingerprint"]!.GetValue<string>(),
-    ["approvedBy"] = "reviewer",
-    ["approvedAt"] = "2026-08-04T00:00:00Z",
-});
+rebased = ChangesetApproval.Add(rebased, "reviewer", "2026-08-04T00:00:00Z");
 
 var drifting = new ChangeSession(rebased, "app", adapter, ledger);
 await drifting.BranchAsync();

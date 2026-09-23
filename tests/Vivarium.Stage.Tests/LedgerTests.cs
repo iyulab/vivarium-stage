@@ -39,12 +39,7 @@ public class LedgerTests
                 baseState: [new BaseStateEntry("ui-artifact", "screen-loans", active.FacetFingerprints["screen-loans"])])
             .AddUiPatch("screen-loans", TestWorld.NewArtifact, v3, "Renders the note field")
             .Finalize();
-        docB["approvals"] = new JsonArray(new JsonObject
-        {
-            ["fingerprint"] = docB["fingerprint"]!.GetValue<string>(),
-            ["approvedBy"] = "reviewer-1",
-            ["approvedAt"] = "2026-07-16T03:00:00Z",
-        });
+        docB = ChangesetApproval.Add(docB, "reviewer-1", "2026-07-16T03:00:00Z");
         var sessionB = await world.SimulatedSessionAsync(docB);
         await sessionB.ApplyAsync("operator-1");
         await sessionB.RollbackAsync("operator-1");

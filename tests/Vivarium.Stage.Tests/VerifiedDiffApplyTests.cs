@@ -24,12 +24,7 @@ public class VerifiedDiffApplyTests
                 ])
             .AddVerifiedDiffPatch("screen-loans", authoredBase, TestWorld.NewArtifact, "Adds the due-date field via diff")
             .Finalize();
-        doc["approvals"] = new JsonArray(new JsonObject
-        {
-            ["fingerprint"] = doc["fingerprint"]!.GetValue<string>(),
-            ["approvedBy"] = "reviewer-1",
-            ["approvedAt"] = "2026-07-19T01:00:00Z",
-        });
+        doc = ChangesetApproval.Add(doc, "reviewer-1", "2026-07-19T01:00:00Z");
         return doc;
     }
 
@@ -86,12 +81,7 @@ public class VerifiedDiffApplyTests
                 baseState: [new BaseStateEntry("ui-artifact", "screen-loans", active.FacetFingerprints["screen-loans"])])
             .AddVerifiedDiffPatch("screen-missing", "old\n", "new\n", "targets an unknown artifact")
             .Finalize();
-        doc["approvals"] = new JsonArray(new JsonObject
-        {
-            ["fingerprint"] = doc["fingerprint"]!.GetValue<string>(),
-            ["approvedBy"] = "reviewer-1",
-            ["approvedAt"] = "2026-07-19T01:00:00Z",
-        });
+        doc = ChangesetApproval.Add(doc, "reviewer-1", "2026-07-19T01:00:00Z");
 
         var session = await world.SimulatedSessionAsync(doc);
         var ex = await Assert.ThrowsAsync<AdapterRefusedException>(() => session.ApplyAsync("operator-1"));

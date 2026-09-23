@@ -65,12 +65,7 @@ public sealed class TestWorld
                 """)!])
             .Finalize();
         if (approved)
-            doc["approvals"] = new JsonArray(new JsonObject
-            {
-                ["fingerprint"] = doc["fingerprint"]!.GetValue<string>(),
-                ["approvedBy"] = "reviewer-1",
-                ["approvedAt"] = "2026-07-16T01:00:00Z",
-            });
+            doc = ChangesetApproval.Add(doc, "reviewer-1", "2026-07-16T01:00:00Z");
         return doc;
     }
 

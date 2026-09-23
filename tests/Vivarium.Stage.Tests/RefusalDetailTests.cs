@@ -168,12 +168,7 @@ public class RefusalDetailTests
                 ["fingerprint"] = "sha256:" + new string('a', 64),
             }).ToArray());
         var restamped = Vivarium.Changeset.ChangesetFingerprint.Stamp(rewritten);
-        restamped["approvals"] = new JsonArray(new JsonObject
-        {
-            ["fingerprint"] = restamped["fingerprint"]!.GetValue<string>(),
-            ["approvedBy"] = "reviewer-1",
-            ["approvedAt"] = "2026-07-16T01:00:00Z",
-        });
+        restamped = Vivarium.Changeset.ChangesetApproval.Add(restamped, "reviewer-1", "2026-07-16T01:00:00Z");
         return restamped;
     }
 }
