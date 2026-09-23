@@ -6,7 +6,7 @@ namespace Vivarium.Stage.Tests;
 /// <summary>
 /// The fault-model §2 partial-failure matrix, executed. Every crash point must
 /// reduce to "no live effect" or "old or new, never mixed" — the acceptance
-/// criterion for Phase 4.b's core (half-applied is structurally impossible).
+/// criterion for the apply core (half-applied is structurally impossible).
 /// </summary>
 public class FaultInjectionTests
 {

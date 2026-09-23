@@ -22,7 +22,7 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Unit + fault-injection tests
         run: dotnet test
-      # Consumer-contact smoke (Phase 5.a): a throwaway console project
+      # Consumer-contact smoke: a throwaway console project
       # references Vivarium.Stage and compiles against the public surface —
       # catches breakage that only shows up at first consumer contact.
       - name: Fresh consumer project references Vivarium.Stage
@@ -46,7 +46,7 @@ jobs:
           Console.WriteLine("consumer sees " + typeof(ChangeSession).FullName);
           EOF
           dotnet run --project .
-      # Docs-example verification (Phase 5.c): the getting-started fences are
+      # Docs-example verification: the getting-started fences are
       # extracted and executed as one fresh consumer program (runner is a
       # type-stripped .ts script, hence the Node setup).
       - uses: actions/setup-node@v4
