@@ -406,7 +406,13 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
                 new JsonObject
                 {
                     ["errors"] = new JsonArray(verdict.Errors
-                        .Select(e => (JsonNode)new JsonObject { ["path"] = path, ["message"] = $"{e.Path}: {e.Message}" })
+                        // The verifier locates each failure within the patch ($.baseFingerprint,
+                        // $.diff.hunk[1]); lifted under the patch's own place in the document.
+                        .Select(e => (JsonNode)new JsonObject
+                        {
+                            ["path"] = e.Path == "$" ? path : path + e.Path[1..],
+                            ["message"] = e.Message,
+                        })
                         .ToArray()),
                 });
         return verdict.NewContent!;

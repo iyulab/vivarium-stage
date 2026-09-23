@@ -64,7 +64,8 @@ public class VerifiedDiffApplyTests
         var ex = await Assert.ThrowsAsync<AdapterRefusedException>(() => session.ApplyAsync("operator-1"));
         Assert.Equal(AdapterRefusalReason.DocumentRefused, ex.Reason);
         Assert.Contains("layer-2", ex.Message);
-        Assert.Equal("$.patches.ui[0]", ex.Details!["errors"]![0]!["path"]!.GetValue<string>());
+        // located at the member that did not match, under the patch's place in the document
+        Assert.Equal("$.patches.ui[0].baseFingerprint", ex.Details!["errors"]![0]!["path"]!.GetValue<string>());
 
         // nothing landed — the active state still fingerprints to the original base
         var active = await world.Inner.ActiveStateAsync(TestWorld.TargetName);
