@@ -106,9 +106,11 @@ its own: an operation can be well formed and still name something absent, and
 that is found only while applying, after earlier operations of the same
 document have landed. Stage the document on a copy and make it the branch
 only once every operation has applied (the reference adapter does this), or
-undo what landed before throwing. `§3/refusal-leaves-branch-preparable` in the
-conformance kit checks this by re-preparing a document known to be good after
-a refusal.
+undo what landed before throwing. The conformance kit checks both halves:
+`§3/refusal-leaves-branch-preparable` re-prepares a document known to be good
+after a refusal, and `§3/refusal-leaves-no-residue` refuses a document part-way
+— an entity created, then an absent one removed — and then asks to remove the
+created entity, which a clean branch must refuse as absent.
 
 ## 4. Fidelity declaration (minimum schema)
 
@@ -296,6 +298,17 @@ Properties of the suite, and why:
   that clause's reason and a message — and, for a document refusal, a location
   in `Details.errors`. Anything else thrown there is reported with what was
   thrown, because a host could not have told it from a fault.
+- **It observes what an adapter did, not only what it said.** A per-facet
+  completion report is the adapter's claim. `§3/flip-lands-prepared-state`
+  compares the fixture target's fingerprints before and after the flip to the
+  prepared branch: each UI artifact the document wrote must fingerprint to the
+  content it wrote (§6 fixes a UI key's value — it is compared with the changeset
+  spec's artifact fingerprint by the drift gate), artifacts it did not touch must
+  not move, and the `schema` key must move exactly when schema operations were
+  carried. It needs nothing beyond `ActiveStateAsync`. Where the contract does not
+  fix the answer, the check says so rather than guessing: data (a predicate that
+  selects no rows has done what it said) and a schema keyed below facet
+  granularity (§6 allows it) are reported as not verified.
 - **It mutates live state.** The run flips the fixture target to a prepared
   branch and flips it back, so it must be pointed at a disposable fixture and
   never at production. The restore runs last, always, and is reported as its own

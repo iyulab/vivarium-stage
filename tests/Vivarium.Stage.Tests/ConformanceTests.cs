@@ -333,6 +333,64 @@ public class ConformanceTests
         Assert.All(report.Failures, f => Assert.Contains("Details.errors", f.Detail));
     }
 
+    [Fact]
+    public async Task Reporting_completion_while_staging_nothing_fails_on_what_landed()
+    {
+        // The adapter says every carried facet is complete and does nothing. Every
+        // check that compares what an adapter says with what the document carried is
+        // satisfied by that; only observing the flipped-to state catches it.
+        var adapter = new ReportsCompletionStagesNothing(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        AssertFailedOnly(report, ConformanceIds.FlipLandsPreparedState);
+        var check = report.Failures.Single();
+        Assert.Contains("'screen-main' fingerprints to", check.Detail);
+    }
+
+    [Fact]
+    public async Task A_schema_carrying_fixture_is_checked_for_movement_and_data_is_named_as_unverified()
+    {
+        var patches = Patches();
+        patches["schema"] = new JsonArray(new JsonObject
+        {
+            ["op"] = "entity.create",
+            ["entity"] = "Order",
+            ["fields"] = new JsonArray(new JsonObject { ["name"] = "id", ["type"] = "string" }),
+            ["explanation"] = "Conformance fixture entity.",
+        });
+        patches["data"] = new JsonArray(new JsonObject
+        {
+            ["id"] = "seed-orders",
+            ["explanation"] = "Conformance fixture rows.",
+            ["operations"] = new JsonArray(new JsonObject
+            {
+                ["op"] = "insert", ["entity"] = "Order", ["values"] = new JsonObject { ["id"] = "o-1" },
+            }),
+        });
+
+        var report = await AdapterConformance.RunAsync(Seeded(), new ConformanceFixture("app", "no-such-target", patches));
+
+        Assert.True(report.AllPassed, report.ToString());
+        var check = report.Checks.Single(c => c.Id == ConformanceIds.FlipLandsPreparedState);
+        Assert.Equal(ConformanceOutcome.Passed, check.Outcome);
+        Assert.Contains("data: a predicate that selects no rows", check.Detail);
+        Assert.DoesNotContain("schema:", check.Detail);
+    }
+
+    [Fact]
+    public async Task A_document_refused_part_way_that_leaves_what_landed_fails()
+    {
+        // Each of the suite's other refusal probes is refused at its first operation, so
+        // an adapter that stages in place passes all of them. This one lands an entity,
+        // refuses on the next operation, and keeps the entity.
+        var adapter = new KeepsWhatLandedBeforeARefusal(Seeded());
+
+        var report = await AdapterConformance.RunAsync(adapter, Fixture());
+
+        AssertFailedOnly(report, ConformanceIds.RefusalLeavesNoResidue);
+    }
+
     private static void AssertFailedOnly(ConformanceReport report, string expectedId)
     {
         Assert.Contains(report.Failures, f => f.Id == expectedId);
@@ -455,6 +513,44 @@ public class ConformanceTests
             catch (AdapterRefusedException e) when (e.Reason == AdapterRefusalReason.DocumentRefused)
             {
                 throw new AdapterRefusedException(AdapterRefusalReason.DocumentRefused, e.Message);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Answers the fixture document with a completion report for exactly the facets it
+    /// carried — the report a correct adapter gives — and stages none of it.
+    /// </summary>
+    private sealed class ReportsCompletionStagesNothing(IBackendAdapter inner) : Passthrough(inner)
+    {
+        public override Task<PrepareReport> PrepareAsync(string b, PreparedFacets f, CancellationToken ct = default)
+        {
+            if (f.ChangesetFingerprint != "sha256:conformance-fixture") return Inner.PrepareAsync(b, f, ct);
+            var carried = new[] { "schema", "ui", "data" }.Where(k => f.Patches[k] is JsonArray { Count: > 0 });
+            return Task.FromResult(new PrepareReport(carried.ToDictionary(k => k, _ => true)));
+        }
+    }
+
+    /// <summary>
+    /// Stands in for an adapter that stages in place: after a refused document created an
+    /// entity, that entity is still "there" on the branch, so a later removal of it succeeds.
+    /// </summary>
+    private sealed class KeepsWhatLandedBeforeARefusal(IBackendAdapter inner) : Passthrough(inner)
+    {
+        private readonly HashSet<(string Branch, string Entity)> _residue = [];
+
+        public override async Task<PrepareReport> PrepareAsync(string b, PreparedFacets f, CancellationToken ct = default)
+        {
+            var ops = (f.Patches["schema"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+            if (ops.Length == 1 && ops[0]["op"]?.GetValue<string>() == "entity.remove"
+                && _residue.Contains((b, ops[0]["entity"]!.GetValue<string>())))
+                return new PrepareReport(new Dictionary<string, bool> { ["schema"] = true });
+            try { return await Inner.PrepareAsync(b, f, ct); }
+            catch (AdapterRefusedException)
+            {
+                foreach (var created in ops.TakeWhile(o => o["op"]?.GetValue<string>() == "entity.create"))
+                    _residue.Add((b, created["entity"]!.GetValue<string>()));
+                throw;
             }
         }
     }

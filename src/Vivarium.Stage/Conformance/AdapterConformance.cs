@@ -33,10 +33,12 @@ public static class ConformanceIds
     public const string PrepareRefusesMalformedSchemaOp = "adapter-api §3/prepare-refuses-malformed-schema-operation";
     public const string PrepareRefusesAbsentSchemaTarget = "adapter-api §3/prepare-refuses-absent-schema-target";
     public const string RefusalLeavesBranchPreparable = "adapter-api §3/refusal-leaves-branch-preparable";
+    public const string RefusalLeavesNoResidue = "adapter-api §3/refusal-leaves-no-residue";
     public const string ActiveStateReturnsRefAndFingerprints = "adapter-api §3/active-state-returns-ref-and-fingerprints";
     public const string ActiveStateDeterministic = "adapter-api §3/active-state-deterministic";
     public const string UnknownTargetThrows = "adapter-api §Error-taxonomy/unknown-target-throws";
     public const string FlipActivatesStateRef = "adapter-api §3/flip-activates-state-ref";
+    public const string FlipLandsPreparedState = "adapter-api §3/flip-lands-prepared-state";
     public const string FlipIdempotentUnderToken = "adapter-api §3/flip-idempotent-under-token";
     public const string TokenReuseDifferentStateThrows = "adapter-api §Error-taxonomy/token-reuse-different-state-throws";
     public const string DiscardHasNoLiveEffect = "adapter-api §3/discard-has-no-live-effect";
@@ -497,12 +499,11 @@ public static class AdapterConformance
                     "verified at the entity level only — the suite cannot name a field or constraint the fixture is known to lack"));
         }
 
-        // Three refusals just happened on this branch. Because the exception type is
-        // the adapter's choice, the only thing that identifies a refusal is the call
-        // it came out of — and a host acting on that identification tells the author
-        // to fix the document and retry. That advice is worthless if the refused
-        // attempt already spoiled the branch, so the guarantee has to be checked and
-        // not merely stated: a good document must still prepare, identically.
+        // Three refusals just happened on this branch, and a host acting on a document
+        // refusal tells the author to fix the document and retry. That advice is
+        // worthless if the refused attempt already spoiled the branch, so the guarantee
+        // has to be checked and not merely stated: a good document must still prepare,
+        // identically.
         const string preparableTitle = "a refusal leaves the branch as preparable as it was";
         try
         {
@@ -520,6 +521,83 @@ public static class AdapterConformance
                 $"a document that prepared cleanly before the refusals now throws — the branch did not survive being refused: {e.Message}");
         }
 
+        // The three refusals above are each refused at their first operation, so none of
+        // them ever had anything staged to leave behind. The case the clause is really
+        // about is a document refused part-way: a well-formed operation lands, and a later
+        // one names something absent — found only while applying. Whatever landed must not
+        // stay. Observed through the interface alone: create an entity, refuse on the next
+        // operation, then ask to remove that entity — on a clean branch it is absent, so
+        // that removal must be refused too. On its own branch, so nothing here can reach
+        // the flip below.
+        const string residueTitle = "a document refused part-way leaves nothing it asked for on the branch";
+        var residueBranch = await adapter.BranchAsync(fixture.KnownTarget, ct);
+        try
+        {
+            var created = new System.Text.Json.Nodes.JsonObject
+            {
+                ["op"] = "entity.create",
+                ["entity"] = "conformance-residue-probe",
+                ["fields"] = new System.Text.Json.Nodes.JsonArray(),
+                ["explanation"] = "conformance probe — lands, then the document is refused",
+            };
+            var refusedPartWay = new System.Text.Json.Nodes.JsonObject
+            {
+                ["schema"] = new System.Text.Json.Nodes.JsonArray(created, new System.Text.Json.Nodes.JsonObject
+                {
+                    ["op"] = "entity.remove",
+                    ["entity"] = "conformance-absent-entity",
+                    ["explanation"] = "conformance probe — absent, refuses the document",
+                }),
+                ["ui"] = new System.Text.Json.Nodes.JsonArray(),
+                ["data"] = new System.Text.Json.Nodes.JsonArray(),
+            };
+            var refused = false;
+            try
+            {
+                await adapter.PrepareAsync(residueBranch.BranchRef,
+                    new PreparedFacets($"{fingerprint}-refused-part-way", refusedPartWay), ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) { refused = true; }
+
+            if (!refused)
+                Skip(ConformanceIds.RefusalLeavesNoResidue, residueTitle,
+                    "the probe document was not refused, so there is no refusal to leave residue — see prepare-refuses-absent-schema-target");
+            else
+            {
+                var removeCreated = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["schema"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["op"] = "entity.remove",
+                        ["entity"] = "conformance-residue-probe",
+                        ["explanation"] = "conformance probe — absent unless the refused document left it behind",
+                    }),
+                    ["ui"] = new System.Text.Json.Nodes.JsonArray(),
+                    ["data"] = new System.Text.Json.Nodes.JsonArray(),
+                };
+                try
+                {
+                    await adapter.PrepareAsync(residueBranch.BranchRef,
+                        new PreparedFacets($"{fingerprint}-residue-check", removeCreated), ct);
+                    Fail(ConformanceIds.RefusalLeavesNoResidue, residueTitle,
+                        "the entity created by the first operation of a refused document was still on the branch — the refusal left what landed before it, so the corrected retry runs against a branch the refused attempt already changed");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception)
+                {
+                    // Removal of an absent entity is refused — exactly what a clean branch does.
+                    // Whether that refusal is well formed is prepare-refuses-absent-schema-target's
+                    // business; this check is only about what the branch still holds.
+                    Pass(ConformanceIds.RefusalLeavesNoResidue, residueTitle);
+                }
+            }
+        }
+        finally
+        {
+            await adapter.DiscardAsync(residueBranch.BranchRef, ct);
+        }
+
         const string prepareLiveTitle = "prepare has no live effect";
         var afterPrepare = await adapter.ActiveStateAsync(fixture.KnownTarget, ct);
         if (!SameState(original, afterPrepare))
@@ -532,11 +610,12 @@ public static class AdapterConformance
         var token = $"{fixture.TokenPrefix}-flip-{Guid.NewGuid():n}";
         const string flipTitle = "flip activates the requested state ref";
         var flipped = false;
+        ActiveState? landed = null;
         try
         {
             await adapter.FlipAsync(fixture.KnownTarget, branch.BranchRef, token, ct);
             flipped = true;
-            var active = await adapter.ActiveStateAsync(fixture.KnownTarget, ct);
+            var active = landed = await adapter.ActiveStateAsync(fixture.KnownTarget, ct);
             if (active.StateRef != branch.BranchRef)
                 Fail(ConformanceIds.FlipActivatesStateRef, flipTitle,
                     $"flip reported success but the active pointer is '{active.StateRef}', not '{branch.BranchRef}'");
@@ -548,6 +627,21 @@ public static class AdapterConformance
         {
             Fail(ConformanceIds.FlipActivatesStateRef, flipTitle, $"flip threw: {e.Message}");
         }
+
+        // The pointer moved — but to a state holding what the document asked for? Until
+        // this check the suite compared what the adapter *said* (its per-facet report)
+        // with what the document *carried*, and never observed what the adapter *did*:
+        // an adapter reporting completion and staging nothing passed. The observation was
+        // available all along. The fixture target is flipped to the prepared branch, and
+        // §6 fixes what the fingerprints mean: a UI key is an artifact's drift ref, and
+        // the drift gate compares it with the changeset spec's artifact fingerprint
+        // (§4, a hash of the content) — so the value a written artifact must hold is known
+        // exactly, without reading the world.
+        const string landsTitle = "the flipped-to state holds what the document staged";
+        if (landed is null)
+            Skip(ConformanceIds.FlipLandsPreparedState, landsTitle, "the flip did not succeed");
+        else
+            CheckLanded(original, landed, fixture.Patches, ConformanceIds.FlipLandsPreparedState, landsTitle, checks);
 
         const string idempotentTitle = "re-issuing the same token for the same state ref is a no-op, not an error";
         if (!flipped)
@@ -642,6 +736,73 @@ public static class AdapterConformance
         }
 
         return new ConformanceReport(checks);
+    }
+
+    /// <summary>
+    /// Compare the state before the flip with the state after it, key by key, against what
+    /// the document carried. Exact where §6 fixes a key's value (UI artifacts), movement
+    /// where it only fixes the facet (<c>schema</c>), and unverifiable — said so — where
+    /// neither holds.
+    /// </summary>
+    private static void CheckLanded(
+        ActiveState before, ActiveState after, System.Text.Json.Nodes.JsonObject patches,
+        string id, string title, List<ConformanceCheck> checks)
+    {
+        var problems = new List<string>();
+        var unreached = new List<string>();
+
+        // Last write wins when a document patches one artifact twice.
+        var written = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var patch in (patches["ui"] as System.Text.Json.Nodes.JsonArray ?? []).OfType<System.Text.Json.Nodes.JsonObject>())
+        {
+            var artifactId = patch["artifactId"]!.GetValue<string>();
+            written[artifactId] = patch["profile"]?.GetValue<string>() == "verified-diff@0"
+                ? patch["newFingerprint"]!.GetValue<string>()
+                : Vivarium.Changeset.ChangesetFingerprint.OfArtifact(patch["newContent"]!.GetValue<string>());
+        }
+        foreach (var (artifactId, expected) in written)
+        {
+            if (!after.FacetFingerprints.TryGetValue(artifactId, out var actual))
+                problems.Add($"artifact '{artifactId}' was written by the document but has no fingerprint in the active state");
+            else if (actual != expected)
+                problems.Add($"artifact '{artifactId}' fingerprints to {actual}; the content the document wrote fingerprints to {expected}");
+        }
+
+        foreach (var (key, value) in before.FacetFingerprints)
+        {
+            if (key is "schema" or "data" || written.ContainsKey(key)) continue;
+            if (!after.FacetFingerprints.TryGetValue(key, out var now))
+                problems.Add($"'{key}' disappeared although the document did not touch it");
+            else if (now != value)
+                problems.Add($"'{key}' changed although the document did not touch it");
+        }
+
+        var schemaCarried = patches["schema"] is System.Text.Json.Nodes.JsonArray { Count: > 0 };
+        if (before.FacetFingerprints.TryGetValue("schema", out var schemaBefore)
+            && after.FacetFingerprints.TryGetValue("schema", out var schemaAfter))
+        {
+            // Every schema operation changes the schema's shape — one that names something
+            // absent is refused, not applied — so a carried schema facet must move.
+            if (schemaCarried && schemaBefore == schemaAfter)
+                problems.Add("the document carried schema operations but the 'schema' fingerprint did not move");
+            if (!schemaCarried && schemaBefore != schemaAfter)
+                problems.Add("the 'schema' fingerprint moved although the document carried no schema operations");
+        }
+        else if (schemaCarried)
+            unreached.Add("schema: no 'schema' key — §6 lets an adapter key the schema below facet granularity, and the suite cannot attribute those keys");
+
+        var dataCarried = patches["data"] is System.Text.Json.Nodes.JsonArray { Count: > 0 };
+        if (dataCarried)
+            unreached.Add("data: a predicate that selects no rows has done what it said, so movement cannot be required");
+        else if (before.FacetFingerprints.TryGetValue("data", out var dataBefore)
+            && after.FacetFingerprints.TryGetValue("data", out var dataAfter) && dataBefore != dataAfter)
+            problems.Add("the 'data' fingerprint moved although the document carried no data operations");
+
+        var note = unreached.Count == 0 ? null : "not verified — " + string.Join("; ", unreached);
+        checks.Add(problems.Count > 0
+            ? new ConformanceCheck(id, title, ConformanceOutcome.Failed,
+                string.Join("; ", problems) + (note is null ? "" : $" ({note})"))
+            : new ConformanceCheck(id, title, ConformanceOutcome.Passed, note));
     }
 
     private static readonly HashSet<string> FidelityModes = ["full", "subset", "stub"];
