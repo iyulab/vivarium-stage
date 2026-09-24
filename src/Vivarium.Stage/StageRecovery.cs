@@ -25,8 +25,13 @@ namespace Vivarium.Stage;
 /// </remarks>
 public sealed record RecoveryOutcome
 {
+    /// <summary>The target that had an operation in flight.</summary>
     public required string Target { get; init; }
+
+    /// <summary>The apply token of the pending entry — the token any appended resolution carries.</summary>
     public required string ApplyToken { get; init; }
+
+    /// <summary>The changeset the pending operation carried.</summary>
     public required string ChangesetFingerprint { get; init; }
 
     /// <summary>apply | rollback — the operation the reconciled pending entry started.</summary>
@@ -63,6 +68,7 @@ public sealed record RecoveryOutcome
 /// </summary>
 public sealed record RecoveryReport
 {
+    /// <summary>The integrity verdict on the ledger this sweep read, reported whether or not anything was pending.</summary>
     public required LedgerIntegrityReport Integrity { get; init; }
 
     /// <summary>One verdict per target that had an operation in flight. Empty when none did.</summary>
@@ -88,6 +94,25 @@ public static class StageRecovery
     /// </summary>
     public const string RecoveryActor = "stage-recovery";
 
+    /// <summary>
+    /// Sweep the ledger once: verify its integrity, then reconcile every target that has a
+    /// started entry with no completion. Where the active state matches the entry's new or
+    /// previous state ref, the matching completed or aborted entry is appended, marked
+    /// reconciled and written by <see cref="RecoveryActor"/>; otherwise the target is
+    /// reported <c>unresolved</c> and nothing is appended.
+    /// </summary>
+    /// <param name="ledger">The ledger to read and to append reconciliations to.</param>
+    /// <param name="adapter">The adapter whose active state decides each pending entry.</param>
+    /// <param name="clock">Timestamps appended entries. Defaults to the system clock.</param>
+    /// <param name="policy">
+    /// Host policy. With <see cref="StagePolicy.RequireIntactLedger"/> set, a <c>broken</c>
+    /// ledger refuses the sweep instead of being reported.
+    /// </param>
+    /// <param name="ct">Cancellation surfaces as cancellation, never as an <c>unresolved</c> verdict.</param>
+    /// <returns>The integrity verdict plus one outcome per target that had an operation in flight.</returns>
+    /// <exception cref="StageRefusedException">
+    /// <see cref="RefusalReason.LedgerIntegrityGate"/>: the policy requires an intact ledger and this one is broken.
+    /// </exception>
     public static async Task<RecoveryReport> RecoverAsync(
         ReleaseLedger ledger, IBackendAdapter adapter, TimeProvider? clock = null,
         StagePolicy? policy = null, CancellationToken ct = default)
@@ -193,8 +218,12 @@ public static class StageRecovery
     /// the library refused to guess, but not to have the assertion recorded as
     /// the library's own verification.</para>
     /// </summary>
+    /// <param name="ledger">The ledger holding the unresolved entry; the resolution is appended to it.</param>
+    /// <param name="target">The target whose in-flight operation is being resolved.</param>
     /// <param name="resolution">completed | aborted — what the operator declares happened.</param>
     /// <param name="actor">Who is declaring it. Recorded on the entry; may not be <see cref="RecoveryActor"/>.</param>
+    /// <param name="clock">Timestamps the appended entry. Defaults to the system clock.</param>
+    /// <param name="ct">Cancels the ledger read and append.</param>
     public static async Task<RecoveryOutcome> ResolveAsync(
         ReleaseLedger ledger, string target, string resolution, string actor,
         TimeProvider? clock = null, CancellationToken ct = default)

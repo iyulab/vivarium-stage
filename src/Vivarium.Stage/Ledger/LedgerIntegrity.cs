@@ -14,6 +14,7 @@ namespace Vivarium.Stage.Ledger;
 /// </summary>
 public sealed record LedgerIntegrityFinding
 {
+    /// <summary>The closed vocabulary of <see cref="Kind"/> values.</summary>
     public static readonly string[] Kinds = ["entry-hash-mismatch", "broken-link", "unchained-after-chain-start"];
 
     /// <summary>The sequence number of the entry the finding is about.</summary>
@@ -22,6 +23,7 @@ public sealed record LedgerIntegrityFinding
     /// <summary>entry-hash-mismatch | broken-link | unchained-after-chain-start</summary>
     public required string Kind { get; init; }
 
+    /// <summary>A human-readable description of what was found at this entry.</summary>
     public required string Message { get; init; }
 }
 
@@ -51,6 +53,7 @@ public sealed record LedgerIntegrityReport
     /// <summary>Sequence number where the chain begins, or null when there is no chain.</summary>
     public long? ChainStartSeq { get; init; }
 
+    /// <summary>Everything the chain found wrong, in sequence order. Empty unless the verdict is <c>broken</c>.</summary>
     public required IReadOnlyList<LedgerIntegrityFinding> Findings { get; init; }
 }
 

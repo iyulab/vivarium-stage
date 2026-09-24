@@ -5,15 +5,65 @@ using Vivarium.Stage.Ledger;
 
 namespace Vivarium.Stage;
 
-public enum SessionState { Proposed, Branched, Simulated, Applied, Discarded, RolledBack }
+/// <summary>Where a <see cref="ChangeSession"/> stands in the lifecycle (README §The lifecycle).</summary>
+public enum SessionState
+{
+    /// <summary>The changeset was admitted; nothing has been staged yet.</summary>
+    Proposed,
 
+    /// <summary>A staging world exists for the target, with a fidelity declaration.</summary>
+    Branched,
+
+    /// <summary>The host's simulation against the branch has been recorded; the session may now apply.</summary>
+    Simulated,
+
+    /// <summary>The changeset is live: the flip landed and the ledger records the apply.</summary>
+    Applied,
+
+    /// <summary>The session ended before applying and its staging world was released. Terminal.</summary>
+    Discarded,
+
+    /// <summary>The apply was undone by flipping back to the state it replaced. Terminal.</summary>
+    RolledBack,
+}
+
+/// <summary>
+/// Which of Stage's gates refused (<see cref="StageRefusedException.Reason"/>). A closed
+/// vocabulary — hosts branch on it.
+/// </summary>
 public enum RefusalReason
 {
+    /// <summary>
+    /// The changeset does not validate against the spec, so it cannot enter the lifecycle;
+    /// also raised when an adapter returns a branch without a fidelity declaration.
+    /// </summary>
     InvalidChangeset,
+
+    /// <summary>
+    /// The fingerprint is missing or no longer matches the changeset's content, or no
+    /// approval record matches it. Only exactly what was reviewed may apply.
+    /// </summary>
     FingerprintGate,
+
+    /// <summary>
+    /// The live target is not in the state the changeset (or the ledger) says it should
+    /// be in. Stage refuses rather than guesses; re-basing is the author's job.
+    /// </summary>
     DriftGate,
+
+    /// <summary>
+    /// The adapter declares a non-atomic flip and host policy has not consented to it
+    /// (<see cref="StagePolicy.AcceptDegradedAdapter"/>).
+    /// </summary>
     DegradedAdapter,
+
+    /// <summary>Prepare did not confirm every facet complete, so no flip is attempted.</summary>
     PrepareIncomplete,
+
+    /// <summary>
+    /// The operation is not valid from the session's current state, or the ledger does not
+    /// support it (for example, nothing to rehydrate, or no operation in flight to resolve).
+    /// </summary>
     InvalidStateTransition,
 
     /// <summary>
@@ -48,6 +98,10 @@ public sealed class StageRefusedException : Exception
 {
     private static JsonObject? Snapshot(JsonObject? details) => (JsonObject?)details?.DeepClone();
 
+    /// <summary>Creates a refusal from the gate <paramref name="reason"/> names.</summary>
+    /// <param name="reason">Which gate refused.</param>
+    /// <param name="message">The human-readable sentence — the one place every detail is guaranteed to appear.</param>
+    /// <param name="details">What the gate observed, or null when there is no actionable fact. Copied at throw time.</param>
     public StageRefusedException(RefusalReason reason, string message, JsonObject? details = null)
         : base(message)
     {
@@ -90,6 +144,7 @@ public sealed record FlipOutcome
     /// <summary><c>apply</c> | <c>rollback</c> — the same axis <c>RecoveryOutcome</c> reports.</summary>
     public required string Operation { get; init; }
 
+    /// <summary>The target this flip ran against.</summary>
     public required string Target { get; init; }
 
     /// <summary>The changeset this flip carried — the one sealed and approved, not "the latest".</summary>
@@ -129,6 +184,7 @@ public sealed record StagePolicy
     /// </summary>
     public bool RequireIntactLedger { get; init; }
 
+    /// <summary>The safe defaults: no degraded adapter accepted, and recovery reports rather than refuses a broken ledger.</summary>
     public static StagePolicy Default { get; } = new();
 }
 
@@ -149,9 +205,19 @@ public sealed class ChangeSession
     private BranchInfo? _branch;
     private JsonObject? _simulationEvidence;
 
+    /// <summary>Where this session stands in the lifecycle.</summary>
     public SessionState State { get; private set; }
+
+    /// <summary>The target this session drives its changeset against.</summary>
     public string Target { get; }
+
+    /// <summary>The admitted changeset's fingerprint — the one approvals, ledger entries and flips refer to.</summary>
     public string Fingerprint { get; }
+
+    /// <summary>
+    /// The branch's fidelity declaration — the interpretation rule for simulation
+    /// evidence. Null until the session has branched.
+    /// </summary>
     public FidelityDeclaration? Fidelity => _branch?.Fidelity;
 
     /// <summary>Validates and admits a changeset document. Only stamped, spec-valid documents enter the lifecycle.</summary>

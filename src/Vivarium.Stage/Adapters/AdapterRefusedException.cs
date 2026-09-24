@@ -54,6 +54,10 @@ public enum AdapterRefusalReason
 /// </remarks>
 public sealed class AdapterRefusedException : Exception
 {
+    /// <summary>Creates a refusal for the contract clause <paramref name="reason"/> names.</summary>
+    /// <param name="reason">Which contract clause refused.</param>
+    /// <param name="message">The human-readable reason. Required: a refusal without a reason is not one.</param>
+    /// <param name="details">What the adapter observed. Copied, so later changes to the argument do not reach the exception.</param>
     public AdapterRefusedException(AdapterRefusalReason reason, string message, JsonObject? details = null)
         : base(message)
     {

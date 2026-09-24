@@ -22,6 +22,10 @@ public sealed record LedgerEntry(
     string? NewStateRef = null,
     bool Reconciled = false)
 {
+    /// <summary>
+    /// The closed vocabulary of <see cref="Kind"/> values. <see cref="ReleaseLedger.AppendAsync"/>
+    /// and <see cref="FromJson"/> both refuse any other kind.
+    /// </summary>
     public static readonly string[] Kinds =
         ["apply-started", "apply-completed", "rollback-started", "rollback-completed", "apply-aborted", "rollback-aborted"];
 
@@ -42,6 +46,10 @@ public sealed record LedgerEntry(
     /// <summary>This entry's own hash. Null on entries written before the ledger chained.</summary>
     public string? EntryHash { get; init; }
 
+    /// <summary>
+    /// The entry as a JSON object with camelCase members. Optional members are written only
+    /// when set, so the result round-trips through <see cref="FromJson"/> unchanged.
+    /// </summary>
     public JsonObject ToJson()
     {
         var obj = new JsonObject
@@ -63,6 +71,11 @@ public sealed record LedgerEntry(
         return obj;
     }
 
+    /// <summary>
+    /// Read an entry back from the shape <see cref="ToJson"/> writes, including its chain
+    /// hashes when present.
+    /// </summary>
+    /// <exception cref="JsonException">The entry's kind is not in <see cref="Kinds"/>.</exception>
     public static LedgerEntry FromJson(JsonObject obj)
     {
         var kind = obj["kind"]!.GetValue<string>();
@@ -112,20 +125,28 @@ public interface ILedgerStore
     /// <summary>Durably append one entry. MUST be write-ahead capable: the entry is durable when this returns.</summary>
     Task AppendAsync(LedgerEntry entry, CancellationToken ct = default);
 
+    /// <summary>Every entry the store holds, exactly as appended. The order is up to the store.</summary>
     Task<IReadOnlyList<LedgerEntry>> ReadAllAsync(CancellationToken ct = default);
 }
 
+/// <summary>
+/// A process-local <see cref="ILedgerStore"/>. Entries live only as long as the instance,
+/// so it offers none of the durability a real store owes — for tests and trials, not production.
+/// </summary>
 public sealed class InMemoryLedgerStore : ILedgerStore
 {
     private readonly List<LedgerEntry> _entries = [];
     private readonly Lock _lock = new();
 
+    /// <inheritdoc/>
     public Task AppendAsync(LedgerEntry entry, CancellationToken ct = default)
     {
         lock (_lock) _entries.Add(entry);
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc/>
+    /// <remarks>Returns a snapshot in append order.</remarks>
     public Task<IReadOnlyList<LedgerEntry>> ReadAllAsync(CancellationToken ct = default)
     {
         lock (_lock) return Task.FromResult<IReadOnlyList<LedgerEntry>>(_entries.ToList());
@@ -154,6 +175,25 @@ public sealed class ReleaseLedger(ILedgerStore store)
     private string? _previousEntryHash;
     private readonly SemaphoreSlim _appendLock = new(1, 1);
 
+    /// <summary>
+    /// Append one entry: assigns the next sequence number, chains it to the previous entry's
+    /// hash, computes its own hash, and writes it to the store before returning it.
+    /// Appends are serialized within this instance; on first use the sequence and chain
+    /// resume after the history already in the store.
+    /// </summary>
+    /// <param name="kind">One of <see cref="LedgerEntry.Kinds"/>. Anything else is refused before the store is touched.</param>
+    /// <param name="target">The target the operation ran against.</param>
+    /// <param name="changesetFingerprint">The changeset the operation carried.</param>
+    /// <param name="applyToken">The token the operation ran under — what pairs a completion or abort with its started entry.</param>
+    /// <param name="actor">Who performed the operation.</param>
+    /// <param name="at">When, as an RFC 3339 timestamp.</param>
+    /// <param name="fidelity">The branch's fidelity declaration, recorded with the apply.</param>
+    /// <param name="previousStateRef">The state that was active before the operation — the return path.</param>
+    /// <param name="newStateRef">The state the operation activates.</param>
+    /// <param name="reconciled">True when the entry was written by reconciliation rather than by the operation itself.</param>
+    /// <param name="ct">Cancels the wait and the store calls.</param>
+    /// <returns>The entry as written, with its sequence number and hashes.</returns>
+    /// <exception cref="ArgumentException"><paramref name="kind"/> is not a ledger entry kind.</exception>
     public async Task<LedgerEntry> AppendAsync(
         string kind, string target, string changesetFingerprint, string applyToken,
         string actor, string at, JsonObject? fidelity = null,
@@ -204,6 +244,7 @@ public sealed class ReleaseLedger(ILedgerStore store)
         }
     }
 
+    /// <summary>Every entry in the store, in the store's order — sort by <see cref="LedgerEntry.Seq"/> when order matters.</summary>
     public Task<IReadOnlyList<LedgerEntry>> ReadAllAsync(CancellationToken ct = default) => store.ReadAllAsync(ct);
 
     /// <summary>Export the full ledger as a JSON array — the audit trail a runtime-mutable platform owes its operators.</summary>

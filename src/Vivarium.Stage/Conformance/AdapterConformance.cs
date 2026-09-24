@@ -18,36 +18,65 @@ namespace Vivarium.Stage.Conformance;
 /// </summary>
 public static class ConformanceIds
 {
+    /// <summary>An adapter without an atomic flip describes its non-atomic window.</summary>
     public const string DegradationDeclared = "adapter-api §2/degradation-declared";
+    /// <summary>The capability manifest declares producible fidelity modes, all within <c>full</c> | <c>subset</c> | <c>stub</c>.</summary>
     public const string ManifestDeclaresFidelityModes = "adapter-api §2/manifest-declares-fidelity-modes";
+    /// <summary><c>branch</c> returns a non-empty branch ref.</summary>
     public const string BranchReturnsRef = "adapter-api §3/branch-returns-ref";
+    /// <summary><c>branch</c> returns a fidelity declaration covering at least one facet.</summary>
     public const string BranchDeclaresFidelity = "adapter-api §3/branch-declares-fidelity";
+    /// <summary>Every declared facet fidelity uses a mode from the vocabulary and names a method.</summary>
     public const string FidelityModeVocabulary = "adapter-api §4/fidelity-mode-vocabulary";
+    /// <summary>A facet declared as <c>subset</c> carries the rule that selected the subset.</summary>
     public const string SubsetRequiresSelectionRule = "adapter-api §4/subset-requires-selection-rule";
+    /// <summary>A branch's fidelity modes are among those the manifest claims to produce.</summary>
     public const string BranchModesWithinManifest = "adapter-api §2/branch-modes-within-manifest";
+    /// <summary>Branching leaves the live target unchanged.</summary>
     public const string BranchHasNoLiveEffect = "adapter-api §3/branch-has-no-live-effect";
+    /// <summary><c>prepare</c> reports completion for exactly the facets the document carried.</summary>
     public const string PrepareReportsPerFacet = "adapter-api §3/prepare-reports-per-facet";
+    /// <summary>Re-preparing the same changeset fingerprint reports the same completion.</summary>
     public const string PrepareIdempotentPerFingerprint = "adapter-api §3/prepare-idempotent-per-fingerprint";
+    /// <summary>Preparing leaves the live target unchanged.</summary>
     public const string PrepareHasNoLiveEffect = "adapter-api §3/prepare-has-no-live-effect";
+    /// <summary><c>prepare</c> refuses a malformed data operation as a document refusal, rather than crashing or staging less.</summary>
     public const string PrepareRefusesMalformedDataOp = "adapter-api §3/prepare-refuses-malformed-data-operation";
+    /// <summary><c>prepare</c> refuses a schema operation outside the vocabulary as a document refusal.</summary>
     public const string PrepareRefusesMalformedSchemaOp = "adapter-api §3/prepare-refuses-malformed-schema-operation";
+    /// <summary><c>prepare</c> refuses a well-formed schema operation that names an entity the branch does not hold.</summary>
     public const string PrepareRefusesAbsentSchemaTarget = "adapter-api §3/prepare-refuses-absent-schema-target";
+    /// <summary>After refusals, a document that prepared cleanly before still prepares with the same completion.</summary>
     public const string RefusalLeavesBranchPreparable = "adapter-api §3/refusal-leaves-branch-preparable";
+    /// <summary>A document refused part-way leaves none of its earlier operations on the branch.</summary>
     public const string RefusalLeavesNoResidue = "adapter-api §3/refusal-leaves-no-residue";
+    /// <summary><c>activeState</c> returns a non-empty state ref and per-facet fingerprints.</summary>
     public const string ActiveStateReturnsRefAndFingerprints = "adapter-api §3/active-state-returns-ref-and-fingerprints";
+    /// <summary>Two <c>activeState</c> reads with no change in between return the same fingerprints.</summary>
     public const string ActiveStateDeterministic = "adapter-api §3/active-state-deterministic";
+    /// <summary><c>activeState</c> on an unknown target refuses with <see cref="AdapterRefusalReason.UnknownTarget"/> rather than inventing a pointer.</summary>
     public const string UnknownTargetThrows = "adapter-api §Error-taxonomy/unknown-target-throws";
+    /// <summary>After a flip, the active state ref is the one requested.</summary>
     public const string FlipActivatesStateRef = "adapter-api §3/flip-activates-state-ref";
+    /// <summary>The flipped-to state holds what the document staged, as far as its fingerprints can show.</summary>
     public const string FlipLandsPreparedState = "adapter-api §3/flip-lands-prepared-state";
+    /// <summary>Re-issuing a flip with the same token and the same state ref is a no-op, not an error.</summary>
     public const string FlipIdempotentUnderToken = "adapter-api §3/flip-idempotent-under-token";
+    /// <summary>Reusing a token for a different state ref refuses with <see cref="AdapterRefusalReason.ApplyTokenConflict"/>.</summary>
     public const string TokenReuseDifferentStateThrows = "adapter-api §Error-taxonomy/token-reuse-different-state-throws";
+    /// <summary>Discarding a staging branch leaves the live target unchanged.</summary>
     public const string DiscardHasNoLiveEffect = "adapter-api §3/discard-has-no-live-effect";
+    /// <summary>Flipping back to the previously active state restores it — the rollback primitive, and how the run returns the fixture.</summary>
     public const string FlipRestoresPreviousState = "adapter-api §3/flip-restores-previous-state";
 }
 
+/// <summary>The result of one conformance check.</summary>
 public enum ConformanceOutcome
 {
+    /// <summary>The adapter meets the clause.</summary>
     Passed,
+
+    /// <summary>The adapter violates the clause; <see cref="ConformanceCheck.Detail"/> says how.</summary>
     Failed,
 
     /// <summary>
@@ -68,7 +97,9 @@ public sealed record ConformanceCheck(string Id, string Title, ConformanceOutcom
 /// </summary>
 public sealed record ConformanceReport(IReadOnlyList<ConformanceCheck> Checks)
 {
+    /// <summary>True when no check failed. Skipped checks do not count against the adapter.</summary>
     public bool AllPassed => Checks.All(c => c.Outcome != ConformanceOutcome.Failed);
+    /// <summary>The checks that failed, in run order.</summary>
     public IReadOnlyList<ConformanceCheck> Failures => Checks.Where(c => c.Outcome == ConformanceOutcome.Failed).ToArray();
 
     /// <summary>Human-readable summary — one line per check, failures first.</summary>

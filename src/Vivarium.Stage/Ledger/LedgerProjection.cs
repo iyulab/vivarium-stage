@@ -22,6 +22,11 @@ public sealed record TargetProjection(
 /// </summary>
 public static class LedgerProjection
 {
+    /// <summary>
+    /// Replay <paramref name="entries"/> in <c>seq</c> order (whatever order they arrive in)
+    /// into one projection per target that appears in them. A completion or abort settles
+    /// the pending entry only when it carries the same apply token.
+    /// </summary>
     public static IReadOnlyDictionary<string, TargetProjection> Replay(IEnumerable<LedgerEntry> entries)
     {
         var applied = new Dictionary<string, List<LedgerEntry>>();

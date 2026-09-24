@@ -24,6 +24,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
     private readonly Lock _lock = new();
     private int _branchCounter;
 
+    /// <inheritdoc/>
     public CapabilityManifest Capabilities { get; } = new(
         FlipCapability.Atomic,
         new Dictionary<string, IReadOnlyList<string>>
@@ -191,6 +192,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
             : throw new AdapterRefusedException(AdapterRefusalReason.UnknownTarget, $"unknown target: {target}",
                 new JsonObject { ["target"] = target });
 
+    /// <inheritdoc/>
     public Task<BranchInfo> BranchAsync(string target, CancellationToken ct = default)
     {
         lock (_lock)
@@ -210,6 +212,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         }
     }
 
+    /// <inheritdoc/>
     public Task<PrepareReport> PrepareAsync(string branchRef, PreparedFacets facets, CancellationToken ct = default)
     {
         lock (_lock)
@@ -242,6 +245,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         }
     }
 
+    /// <inheritdoc/>
     public Task FlipAsync(string target, string stateRef, string applyToken, CancellationToken ct = default)
     {
         lock (_lock)
@@ -264,6 +268,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         }
     }
 
+    /// <inheritdoc/>
     public Task<ActiveState> ActiveStateAsync(string target, CancellationToken ct = default)
     {
         lock (_lock)
@@ -281,6 +286,7 @@ public sealed class InMemoryBackendAdapter : IBackendAdapter
         }
     }
 
+    /// <inheritdoc/>
     public Task DiscardAsync(string branchRef, CancellationToken ct = default)
     {
         lock (_lock)
