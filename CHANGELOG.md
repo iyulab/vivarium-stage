@@ -6,6 +6,29 @@ versioning: 0.x — minor for surface changes, patch for fixes. Stage versions
 independently of the changeset spec: it consumes the contract, it does not
 define it.
 
+## 0.10.0 — 2026-09-24
+
+### Added
+- The package now carries XML documentation for every public member, so IDEs show
+  the contract (what is refused, when, and why) at the call site.
+- Conformance kit: `§3/prepare-applies-spec-order` checks that prepare applies one
+  document in the changeset spec's §5.4 order (additive schema operations, then data,
+  then removing ones). Set `ConformanceFixture.OrderProbeEntity` to an entity of the
+  fixture target that holds at least one row; the kit adds, writes and removes a probe
+  field in one document and expects the schema and data fingerprints not to move.
+  Without it the check reports itself skipped.
+
+### Changed
+- Depends on `Vivarium.Changeset` 0.6.0 (spec 0.5.0): an approval record carrying
+  `attestation` is now refused by the validator Stage applies.
+- README: no longer lists a live-propagation hook. Stage returns the outcome of
+  every apply and records it in the ledger; notifying connected clients is the
+  host's job. The adapter section now says the signatures are in the adapter
+  document rather than still to come.
+  It also says what Stage adds over platform-level database branching and restore: an
+  approved fingerprint is the only thing that applies, a drifted base is refused, and
+  the same changeset carries the UI.
+
 ## 0.9.0 — 2026-09-23
 
 ### Added
