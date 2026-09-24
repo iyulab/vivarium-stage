@@ -6,6 +6,14 @@ versioning: 0.x — minor for surface changes, patch for fixes. Stage versions
 independently of the changeset spec: it consumes the contract, it does not
 define it.
 
+## 0.10.1 — 2026-09-24
+
+### Changed
+- The readme now says which gallery runs can be re-checked offline, and against what, instead of implying every archived run can be.
+
+### Fixed
+- XML documentation that named the adapter API document by a repository-relative path now links to it by URL — the path did not exist in the installed package, and IDEs show this text on hover.
+
 ## 0.10.0 — 2026-09-24
 
 ### Added
