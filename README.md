@@ -40,7 +40,6 @@ Preview and release are one repository because they are one state machine: a bra
 - **The lifecycle service.** The state machine above, exposed as an API: create branch, run simulation, gate and execute apply, roll back, inspect history.
 - **The backend adapter boundary.** Stage speaks to schema/data backends through adapters. This repository ships the [boundary contract](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md), a reference in-memory adapter, and an **executable conformance suite** that checks any implementation against the contract's clauses — so "does my adapter conform?" is a question you run, not one you read. Real-backend adapters live with the consuming application. The boundary is designed in from the start — Stage must not be un-portable from any one backend.
 - **The release ledger.** An append-only history of what was applied, when, by whom, from which fingerprint — the audit trail a runtime-mutable platform owes its operators. Entries are chained, so the ledger can say whether its own history was rewritten rather than only promising that it was not; the check reports what it could not cover instead of implying it covered everything.
-- **Live propagation hooks.** After a successful apply, connected clients are told to pick up the new world. The mechanism is adapter/host territory; the hook is Stage's.
 
 ## What this repository is not
 
@@ -48,6 +47,7 @@ Preview and release are one repository because they are one state machine: a bra
 - **Not a UI runtime.** Stage stores and versions UI artifacts as opaque payloads within changesets; rendering them is the runtime's job ([`vivarium`](https://github.com/iyulab/vivarium)).
 - **Not a CI/CD system.** Stage applies application-level changesets to running systems in seconds. It does not build code, run test matrices, or deploy infrastructure.
 - **Not a database.** Stage orchestrates backends through adapters; it does not persist tenant data itself.
+- **Not a change broadcaster.** Stage returns the outcome of every apply and records it in the ledger. Telling connected clients to pick up the new world is the host's job, over whatever channel the host already has.
 - **Not a backend integration.** Adapters for real backends are the consuming application's responsibility. Stage ships the adapter contract and a reference in-memory adapter — it knows no specific backend product.
 
 ## Fixed principles
@@ -77,15 +77,13 @@ Preview and release are one repository because they are one state machine: a bra
   atomic swap primitive (idempotent under an apply token) or honestly
   declares its degradation, and applies through a degraded adapter require
   explicit host policy consent. The boundary's operations and contracts are
-  fixed in [docs/adapter-api.md](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md); exact signatures land
-  with the first adapter.
+  fixed in [docs/adapter-api.md](https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md), signatures included.
 
 ## Deliberately undecided
 
 - Which further backends get adapters, and the adapter API's final shape
 - Deployment topology (per-tenant, shared service, embedded library mode)
 - Retention and lifecycle policy for branches and preview environments
-- The live-propagation transport (SignalR is a natural first candidate, not a commitment)
 
 ## Relationship to the Vivarium family
 
