@@ -18,6 +18,8 @@ A reviewable change is only half of safety. The other half is *how it lands*: on
 
 Vivarium Stage exists to make all three structurally impossible. It is the one component in the family with the authority — and the responsibility — to touch running systems.
 
+Branching and snapshotting a database, and restoring code and data together, are now offered by infrastructure platforms as well. What Stage adds sits between proposal and landing: only the fingerprint a reviewer approved can be applied, a change whose recorded base no longer matches the live state is refused rather than merged, and one changeset carries the UI together with schema and data. Branching backends are candidates to sit under Stage's adapter boundary, not alternatives to it.
+
 ## The lifecycle
 
 Stage owns a single state machine that every changeset passes through:
