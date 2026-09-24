@@ -205,7 +205,7 @@ public sealed record ConformanceFixture(
 
 /// <summary>
 /// Executable conformance suite for <see cref="IBackendAdapter"/>
-/// implementations — the normative boundary in <c>docs/adapter-api.md</c>,
+/// implementations — the normative boundary in <see href="https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md">adapter-api</see>,
 /// checked rather than read.
 ///
 /// Stage specifies what an adapter must do but cannot see whether a given

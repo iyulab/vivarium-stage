@@ -3,13 +3,13 @@ using System.Text.Json.Nodes;
 namespace Vivarium.Stage.Adapters;
 
 /// <summary>
-/// Backend adapter boundary (docs/adapter-api.md v0.1). The adapter owns how
+/// Backend adapter boundary (<see href="https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md">adapter-api</see> v0.1). The adapter owns how
 /// branches are made, how facet states are staged, and the atomic flip
 /// primitive. It never sees approval semantics, ledger contents, or how
 /// changesets were authored — it consumes prepared facet operations only.
 ///
 /// Signatures are v0 — finalized against the first real-backend adapter
-/// (consumer-owned) and recorded in docs/adapter-api.md.
+/// (consumer-owned) and recorded in <see href="https://github.com/iyulab/vivarium-stage/blob/main/docs/adapter-api.md">adapter-api</see>.
 /// </summary>
 public interface IBackendAdapter
 {
