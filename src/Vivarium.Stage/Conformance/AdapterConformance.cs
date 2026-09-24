@@ -60,6 +60,11 @@ public static class ConformanceIds
     public const string FlipActivatesStateRef = "adapter-api §3/flip-activates-state-ref";
     /// <summary>The flipped-to state holds what the document staged, as far as its fingerprints can show.</summary>
     public const string FlipLandsPreparedState = "adapter-api §3/flip-lands-prepared-state";
+    /// <summary>
+    /// Prepare applies one document in the changeset spec's §5.4 order: additive schema
+    /// operations, then data operations, then removing ones, a removal taking its values.
+    /// </summary>
+    public const string PrepareAppliesSpecOrder = "adapter-api §3/prepare-applies-spec-order";
     /// <summary>Re-issuing a flip with the same token and the same state ref is a no-op, not an error.</summary>
     public const string FlipIdempotentUnderToken = "adapter-api §3/flip-idempotent-under-token";
     /// <summary>Reusing a token for a different state ref refuses with <see cref="AdapterRefusalReason.ApplyTokenConflict"/>.</summary>
@@ -126,6 +131,13 @@ public sealed record ConformanceReport(IReadOnlyList<ConformanceCheck> Checks)
 /// in a real apply". An empty or unrecognised patch set makes the prepare
 /// checks report on the fixture rather than on the adapter.
 /// </param>
+/// <param name="OrderProbeEntity">
+/// An entity of <paramref name="KnownTarget"/> that holds at least one row, for the
+/// §5.4 order probe. The kit adds a field to it, writes that field on every row, and
+/// removes the field again, all in one document — expressible only in spec order, and
+/// a no-op on schema and data when applied that way. Leave it null and the order check
+/// reports itself skipped.
+/// </param>
 /// <param name="TokenPrefix">
 /// Prefix for the flip tokens this run issues. Tokens are unique per run so a
 /// re-run is not mistaken for an idempotent replay; the prefix is what makes
@@ -138,7 +150,8 @@ public sealed record ConformanceFixture(
     string KnownTarget,
     string UnknownTarget,
     System.Text.Json.Nodes.JsonObject Patches,
-    string TokenPrefix = "conformance")
+    string TokenPrefix = "conformance",
+    string? OrderProbeEntity = null)
 {
     /// <summary>The facet keys a changeset's <c>patches</c> object may carry (spec §5).</summary>
     private static readonly string[] FacetKeys = ["schema", "ui", "data"];
@@ -734,6 +747,89 @@ public static class AdapterConformance
         catch (Exception e)
         {
             Fail(ConformanceIds.DiscardHasNoLiveEffect, discardTitle, $"discard threw: {e.Message} — discard is always safe");
+        }
+
+        // ---- §3 prepare order (spec §5.4) ----
+        // Fingerprints cannot show a data value, but they can show that nothing changed.
+        // One document adds a probe field, writes it on every row, and removes it: in spec
+        // order that is expressible and leaves schema and data exactly as they were. Run
+        // the removal before the write, or every schema operation before the data, and the
+        // write lands on an undeclared field — refused, or left behind as a member no
+        // schema declares. Either way the state that lands is not the state that was.
+        const string orderTitle = "prepare applies one document in spec §5.4 order (add, then data, then remove)";
+        if (fixture.OrderProbeEntity is not { Length: > 0 } probeEntity)
+        {
+            Skip(ConformanceIds.PrepareAppliesSpecOrder, orderTitle,
+                "the fixture names no OrderProbeEntity — the probe needs an entity with at least one row");
+        }
+        else
+        {
+            var probeField = "conformanceorderprobe" + Guid.NewGuid().ToString("n")[..8];
+            var orderPatches = new System.Text.Json.Nodes.JsonObject
+            {
+                // Listed in the reverse of spec order on purpose: the order is the
+                // adapter's to impose, not an accident of how the document was written.
+                ["schema"] = new System.Text.Json.Nodes.JsonArray(
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["op"] = "field.remove",
+                        ["entity"] = probeEntity,
+                        ["field"] = probeField,
+                        ["explanation"] = "conformance order probe — retire the probe field",
+                    },
+                    new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["op"] = "field.add",
+                        ["entity"] = probeEntity,
+                        ["field"] = new System.Text.Json.Nodes.JsonObject { ["name"] = probeField, ["type"] = "string" },
+                        ["explanation"] = "conformance order probe — add the probe field",
+                    }),
+                ["ui"] = new System.Text.Json.Nodes.JsonArray(),
+                ["data"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+                {
+                    ["id"] = "conformance-order-probe",
+                    ["explanation"] = "conformance order probe — write the field while it is declared",
+                    ["operations"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["op"] = "update",
+                        ["entity"] = probeEntity,
+                        ["where"] = new System.Text.Json.Nodes.JsonObject { ["field"] = probeField, ["equals"] = null },
+                        ["set"] = new System.Text.Json.Nodes.JsonObject { [probeField] = "written" },
+                    }),
+                }),
+            };
+            try
+            {
+                var baseline = await adapter.ActiveStateAsync(fixture.KnownTarget, ct);
+                var orderBranch = await adapter.BranchAsync(fixture.KnownTarget, ct);
+                await adapter.PrepareAsync(orderBranch.BranchRef,
+                    new PreparedFacets($"{fingerprint}-order-probe", orderPatches), ct);
+                await adapter.FlipAsync(fixture.KnownTarget, orderBranch.BranchRef, $"{fixture.TokenPrefix}-order-{Guid.NewGuid():n}", ct);
+                var after = await adapter.ActiveStateAsync(fixture.KnownTarget, ct);
+                string[] observable = ["schema", "data"];
+                var moved = observable
+                    .Where(k => baseline.FacetFingerprints.TryGetValue(k, out var b)
+                        && (!after.FacetFingerprints.TryGetValue(k, out var a) || a != b))
+                    .ToArray();
+                var unobserved = observable.Where(k => !baseline.FacetFingerprints.ContainsKey(k)).ToArray();
+                if (moved.Length > 0)
+                    Fail(ConformanceIds.PrepareAppliesSpecOrder, orderTitle,
+                        $"adding, writing and removing a probe field on '{probeEntity}' changed the {string.Join(" and ", moved)} fingerprint — in spec §5.4 order the document is a no-op, so the write landed on a field that was no longer (or not yet) declared");
+                else if (unobserved.Length == observable.Length)
+                    Skip(ConformanceIds.PrepareAppliesSpecOrder, orderTitle,
+                        "the active state carries no 'schema' or 'data' fingerprint, so a no-op cannot be told from a change");
+                else if (unobserved.Length > 0)
+                    checks.Add(new ConformanceCheck(ConformanceIds.PrepareAppliesSpecOrder, orderTitle, ConformanceOutcome.Passed,
+                        $"observed through '{observable.Except(unobserved).Single()}' only — the active state carries no '{unobserved[0]}' fingerprint"));
+                else
+                    Pass(ConformanceIds.PrepareAppliesSpecOrder, orderTitle);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception e)
+            {
+                Fail(ConformanceIds.PrepareAppliesSpecOrder, orderTitle,
+                    $"a document that adds, writes and removes a probe field on '{probeEntity}' could not be applied ({e.Message}) — spec §5.4 makes it expressible; if '{probeEntity}' is not an entity of the target with at least one row, fix the fixture");
+            }
         }
 
         // ---- restore: the rollback primitive, and the fixture's way home ----

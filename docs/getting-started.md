@@ -485,6 +485,12 @@ the run would come back green about work that never happened, indistinguishable 
 real pass. The prepare verdict also says which facets the document carried, and fails an
 adapter whose report covers more or fewer than those.
 
+Name an entity of the fixture target that holds at least one row as `OrderProbeEntity`
+and the suite also checks the order your prepare applies a document in (spec §5.4: add,
+then data, then remove). It adds a probe field, writes it on every row and removes it in one
+document — a no-op on schema and data in that order, and a visible change in any other.
+Without it, that check reports itself skipped.
+
 ## Where to go next
 
 - [fault-model.md](fault-model.md) — the partial-failure matrix (F1–F6) and

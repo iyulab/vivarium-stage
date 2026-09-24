@@ -309,6 +309,13 @@ Properties of the suite, and why:
   fix the answer, the check says so rather than guessing: data (a predicate that
   selects no rows has done what it said) and a schema keyed below facet
   granularity (§6 allows it) are reported as not verified.
+- **Order is observed as a no-op.** `§3/prepare-applies-spec-order` cannot read a
+  value, so it checks what fingerprints can show: one document that adds a probe field
+  to the fixture's `OrderProbeEntity`, writes it on every row, and removes it is a no-op
+  on the `schema` and `data` fingerprints in spec §5.4 order — and in any other order the
+  write lands on an undeclared field, refused or left behind. The document lists its
+  schema operations in reverse on purpose: the order is the adapter's to impose. No
+  probe entity, no check (`Skipped`, saying why).
 - **It mutates live state.** The run flips the fixture target to a prepared
   branch and flips it back, so it must be pointed at a disposable fixture and
   never at production. The restore runs last, always, and is reported as its own
